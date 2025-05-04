@@ -1,0 +1,459 @@
+from typing import Optional, Dict, List, Any
+import boto3
+from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
+
+from ..logger import custom_logger
+
+logger = custom_logger()
+
+
+class DynamoDBHelper:
+    """Custom helper for DynamoDB to simplify CRUD operations."""
+
+    def __init__(
+        self,
+        table_name: str,
+        region_name: Optional[str] = None,
+        pk_name: str = "PK",
+        sk_name: str = "SK",
+    ) -> None:
+        """
+        Initialize the DynamoDB helper.
+
+        :param table_name: Name of the DynamoDB table.
+        :param region_name: AWS region (optional, defaults to boto3 default).
+        :param pk_name: Name of the partition key (default: 'PK').
+        :param sk_name: Name of the sort key (default: 'SK').
+        """
+        self.table_name = table_name
+        self.pk_name = pk_name
+        self.sk_name = sk_name
+        session = boto3.Session(region_name=region_name) if region_name else boto3.Session()
+        self.dynamodb_client = session.client("dynamodb")
+        self.dynamodb_resource = session.resource("dynamodb")
+        self.table = self.dynamodb_resource.Table(self.table_name)
+        self._validate_table()
+        logger.info(f"Configured helper for DynamoDB table: {table_name}")
+
+    def _validate_table(self) -> None:
+        """Validate that the table exists and Ascertain"""
+        try:
+            self.dynamodb_client.describe_table(TableName=self.table_name)
+        except ClientError as error:
+            logger.error(f"Table {self.table_name} does not exist or is inaccessible")
+            raise error
+
+    def get_item(
+        self, partition_key: str, sort_key: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a single item from DynamoDB using the primary key (pk+sk).
+
+        :param partition_key: Partition key value.
+        :param sort_key: Sort key value (optional).
+        :return: Item dictionary or None if not found.
+        """
+        key = {self.pk_name: {"S": partition_key}}
+        log_keys = f"PK: {partition_key}"
+        if sort_key:
+            key[self.sk_name] = {"S": sort_key}
+            log_keys += f", SK: {sort_key}"
+
+        logger.info(f"Retrieving item with {log_keys}")
+        try:
+            response = self.dynamodb_client.get_item(TableName=self.table_name, Key=key)
+            item = response.get("Item")
+            logger.info("Item retrieved successfully" if item else "Item not found")
+            return item
+        except ClientError as error:
+            logger.error(
+                f"Failed to retrieve item - Table: {self.table_name} | {log_keys} | "
+                f"Error: {error.response['Error']['Code']}"
+            )
+            raise error
+
+    def query_items_by_begins_pk_sk(
+        self, partition_key: str, sort_key_portion: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Query items where PK and SK begin with the provided values.
+
+        :param partition_key: Partition key prefix.
+        :param sort_key_portion: Sort key prefix.
+        :param limit: Maximum items per query (default: 50).
+        :return: List of matching items.
+        """
+        logger.info(
+            f"Querying items with PK begins_with: {partition_key}, "
+            f"SK begins_with: {sort_key_portion}"
+        )
+        all_items = []
+        try:
+            key_condition = Key(self.pk_name).begins_with(partition_key) & Key(self.sk_name).begins_with(sort_key_portion)
+            response = self.table.query(KeyConditionExpression=key_condition, Limit=limit)
+            all_items.extend(response.get("Items", []))
+            logger.debug(f"Initial query returned {len(response.get('Items', []))} items")
+
+            while "LastEvaluatedKey" in response:
+                response = self.table.query(
+                    KeyConditionExpression=key_condition,
+                    Limit=limit,
+                    ExclusiveStartKey=response["LastEvaluatedKey"],
+                )
+                all_items.extend(response.get("Items", []))
+                logger.debug(f"Paged query returned {len(response.get('Items', []))} items")
+
+            logger.info(f"Total items retrieved: {len(all_items)}")
+            return all_items
+        except ClientError as error:
+            logger.error(
+                f"Query failed - Table: {self.table_name} | PK: {partition_key} | "
+                f"SK: {sort_key_portion} | Error: {error.response['Error']['Message']}"
+            )
+            raise error
+
+    def put_item(self, data: Dict[str, Any], condition: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Insert a new item into the DynamoDB table.
+
+        :param data: Item to insert (DynamoDB attribute value format).
+        :param condition: Optional condition expression for the put operation.
+        :return: Response from DynamoDB.
+        """
+        logger.info(f"Inserting item into table {self.table_name}")
+        logger.debug(f"Data: {data}")
+        try:
+            kwargs = {"TableName": self.table_name, "Item": data}
+            if condition:
+                kwargs["ConditionExpression"] = condition
+            response = self.table.put_item(**kwargs)
+            logger.info("Item inserted successfully")
+            return response
+        except ClientError as error:
+            logger.error(
+                f"Failed to insert item - Table: {self.table_name} | "
+                f"Error: {error.response['Error']['Code']} | "
+                f"Message: {error.response['Error']['Message']}"
+            )
+            raise error
+
+    def update_item(
+        self,
+        partition_key: str,
+        sort_key: Optional[str] = None,
+        update_expression: str = None,
+        expression_attribute_values: Optional[Dict[str, Any]] = None,
+        condition_expression: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Update an item in the DynamoDB table.
+
+        :param partition_key: Partition key value.
+        :param sort_key: Sort key value (optional).
+        :param update_expression: Update expression (e.g., 'SET #attr = :val').
+        :param expression_attribute_values: Values for the update expression.
+        :param condition_expression: Optional condition for the update.
+        :return: Response from DynamoDB.
+        """
+        key = {self.pk_name: {"S": partition_key}}
+        log_keys = f"{self.pk_name}: {partition_key}"
+        if sort_key:
+            key[self.sk_name] = {"S": sort_key}
+            log_keys += f", {self.sk_name}: {sort_key}"
+
+        logger.info(f"Updating item with {log_keys}")
+        try:
+            kwargs = {
+                "TableName": self.table_name,
+                "Key": key,
+                "UpdateExpression": update_expression,
+                "ExpressionAttributeValues": expression_attribute_values,
+                "ReturnValues": "UPDATED_NEW",
+            }
+            if condition_expression:
+                kwargs["ConditionExpression"] = condition_expression
+
+            response = self.table.update_item(**kwargs)
+            logger.info("Item updated successfully")
+            logger.debug(f"Updated attributes: {response.get('Attributes', {})}")
+            return response
+        except ClientError as error:
+            logger.error(
+                f"Failed to update item - Table: {self.table_name} | {log_keys} | "
+                f"Error: {error.response['Error']['Code']} | "
+                f"Message: {error.response['Error']['Message']}"
+            )
+            raise error
+
+    def delete_item(
+        self,
+        partition_key: str,
+        sort_key: Optional[str] = None,
+        condition_expression: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Delete an item from the DynamoDB table.
+
+        :param partition_key: Partition key value.
+        :param sort_key: Sort key value (optional).
+        :param condition_expression: Optional condition for the delete.
+        :return: Response from DynamoDB.
+        """
+        key = {self.pk_name: {"S": partition_key}}
+        log_keys = f"{self.pk_name}: {partition_key}"
+        if sort_key:
+            key[self.sk_name] = {"S": sort_key}
+            log_keys += f", {self.sk_name}: {sort_key}"
+
+        logger.info(f"Deleting item with {log_keys}")
+        try:
+            kwargs = {"TableName": self.table_name, "Key": key}
+            if condition_expression:
+                kwargs["ConditionExpression"] = condition_expression
+
+            response = self.table.delete_item(**kwargs)
+            logger.info("Item deleted successfully")
+            return response
+        except ClientError as error:
+            logger.error(
+                f"Failed to delete item - Table: {self.table_name} | {log_keys} | "
+                f"Error: {error.response['Error']['Code']} | "
+                f"Message: {error.response['Error']['Message']}"
+            )
+            raise error
+
+    def batch_get_items(
+        self, keys: List[Dict[str, Dict[str, str]]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve multiple items from the DynamoDB table in a batch.
+
+        :param keys: List of key dictionaries (e.g., [{"PK": {"S": "val"}, "SK": {"S": "val"}}]).
+        :return: List of retrieved items.
+        """
+        logger.info(f"Batch retrieving {len(keys)} items from table {self.table_name}")
+        all_items = []
+        try:
+            while keys:
+                response = self.dynamodb_client.batch_get_item(
+                    RequestItems={
+                        self.table_name: {
+                            "Keys": keys[:100],  # DynamoDB batch limit is 100
+                            "ConsistentRead": False,
+                        }
+                    }
+                )
+                items = response.get("Responses", {}).get(self.table_name, [])
+                all_items.extend(items)
+                logger.debug(f"Batch retrieved {len(items)} items")
+
+                # Handle unprocessed keys
+                unprocessed = response.get("UnprocessedKeys", {}).get(self.table_name, {}).get("Keys", [])
+                keys = unprocessed
+                if unprocessed:
+                    logger.warning(f"Retrying {len(unprocessed)} unprocessed keys")
+
+            logger.info(f"Total items retrieved: {len(all_items)}")
+            return all_items
+        except ClientError as error:
+            logger.error(
+                f"Batch get failed - Table: {self.table_name} | "
+                f"Error: {error.response['Error']['Code']} | "
+                f"Message: {error.response['Error']['Message']}"
+            )
+            raise error
+
+    def batch_write_items(
+        self, put_items: Optional[List[Dict[str, Any]]] = None, delete_items: Optional[List[Dict[str, Dict[str, str]]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Write or delete multiple items in the DynamoDB table in a batch.
+
+        :param put_items: List of items to put (DynamoDB attribute value format).
+        :param delete_items: List of keys to delete (e.g., [{"PK": {"S": "val"}, "SK": {"S": "val"}}]).
+        :return: Response from DynamoDB.
+        """
+        logger.info(f"Batch writing to table {self.table_name}")
+        put_items = put_items or []
+        delete_items = delete_items or []
+        requests = []
+
+        for item in put_items:
+            requests.append({"PutRequest": {"Item": item}})
+        for key in delete_items:
+            requests.append({"DeleteRequest": {"Key": key}})
+
+        logger.debug(f"Processing {len(put_items)} puts and {len(delete_items)} deletes")
+        try:
+            response = {"UnprocessedItems": {}}
+            while requests:
+                batch = requests[:25]  # DynamoDB batch limit is 25
+                response = self.dynamodb_client.batch_write_item(
+                    RequestItems={self.table_name: batch}
+                )
+                unprocessed = response.get("UnprocessedItems", {}).get(self.table_name, [])
+                requests = unprocessed
+                if unprocessed:
+                    logger.warning(f"Retrying {len(unprocessed)} unprocessed requests")
+
+            logger.info("Batch write completed successfully")
+            return response
+        except ClientError as error:
+            logger.error(
+                f"Batch write failed - Table: {self.table_name} | "
+                f"Error: {error.response['Error']['Code']}
+            f"Message: {error.response['Error']['Message']}"
+            )
+            raise error
+
+    def scan_table(
+        self,
+        filter_expression: Optional[Union[Attr, str]] = None,
+        limit: int = 50,
+        projection_expression: Optional[str] = None,
+        expression_attribute_names: Optional[Dict[str, str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Scan the DynamoDB table to retrieve items.
+
+        :param filter_expression: Optional filter expression (e.g., Attr('attribute').eq('value')).
+        :param limit: Maximum items per scan (default: 50).
+        :param projection_expression: Optional projection expression to limit returned attributes.
+        :param expression_attribute_names: Optional attribute names for projection or filter expressions.
+        :return: List of scanned items.
+        """
+        logger.info(f"Scanning table {self.table_name}")
+        all_items = []
+        try:
+            kwargs = {"Limit": limit}
+            if filter_expression:
+                kwargs["FilterExpression"] = filter_expression
+            if projection_expression:
+                kwargs["ProjectionExpression"] = projection_expression
+            if expression_attribute_names:
+                kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+            response = self.table.scan(**kwargs)
+            all_items.extend(response.get("Items", []))
+            logger.debug(f"Initial scan returned {len(response.get('Items', []))} items")
+
+            while "LastEvaluatedKey" in response:
+                kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.table.scan(**kwargs)
+                all_items.extend(response.get("Items", []))
+                logger.debug(f"Paged scan returned {len(response.get('Items', []))} items")
+
+            logger.info(f"Total items scanned: {len(all_items)}")
+            return all_items
+        except ClientError as error:
+            logger.error(
+                f"Scan failed - Table: {self.table_name} | "
+                f"Error: {error.response['Error']['Code']} | "
+                f"Message: {error.response['Error']['Message']}"
+            )
+            raise error
+
+    def query_by_index(
+        self,
+        index_name: str,
+        key_condition_expression: Union[Key, str],
+        filter_expression: Optional[Union[Attr, str]] = None,
+        limit: int = 50,
+        projection_expression: Optional[str] = None,
+        expression_attribute_names: Optional[Dict[str, str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Query a secondary index in the DynamoDB table.
+
+        :param index_name: Name of the secondary index.
+        :param key_condition_expression: Key condition for the query (e.g., Key('index_key').eq('value')).
+        :param filter_expression: Optional filter expression.
+        :param limit: Maximum items per query (default: 50).
+        :param projection_expression: Optional projection expression.
+        :param expression_attribute_names: Optional attribute names for expressions.
+        :return: List of matching items.
+        """
+        logger.info(f"Querying index {index_name} on table {self.table_name}")
+        all_items = []
+        try:
+            kwargs = {
+                "IndexName": index_name,
+                "KeyConditionExpression": key_condition_expression,
+                "Limit": limit,
+            }
+            if filter_expression:
+                kwargs["FilterExpression"] = filter_expression
+            if projection_expression:
+                kwargs["ProjectionExpression"] = projection_expression
+            if expression_attribute_names:
+                kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+            response = self.table.query(**kwargs)
+            all_items.extend(response.get("Items", []))
+            logger.debug(f"Initial query returned {len(response.get('Items', []))} items")
+
+            while "LastEvaluatedKey" in response:
+                kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.table.query(**kwargs)
+                all_items.extend(response.get("Items", []))
+                logger.debug(f"Paged query returned {len(response.get('Items', []))} items")
+
+            logger.info(f"Total items retrieved: {len(all_items)}")
+            return all_items
+        except ClientError as error:
+            logger.error(
+                f"Index query failed - Table: {self.table_name} | Index: {index_name} | "
+                f"Error: {error.response['Error']['Code']} | "
+                f"Message: {error.response['Error']['Message']}"
+            )
+            raise error
+
+    def transact_write_items(
+        self,
+        put_items: Optional[List[Dict[str, Any]]] = None,
+        delete_items: Optional[List[Dict[str, Dict[str, str]]]] = None,
+        update_items: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Perform a transactional write operation (put, delete, or update) on multiple items.
+
+        :param put_items: List of items to put (DynamoDB attribute value format).
+        :param delete_items: List of keys to delete.
+        :param update_items: List of update operations (with Key, UpdateExpression, etc.).
+        :return: Response from DynamoDB.
+        """
+        logger.info(f"Executing transactional write on table {self.table_name}")
+        put_items = put_items or []
+        delete_items = delete_items or []
+        update_items = update_items or []
+        transact_items = []
+
+        for item in put_items:
+            transact_items.append({"Put": {"TableName": self.table_name, "Item": item}})
+        for key in delete_items:
+            transact_items.append({"Delete": {"TableName": self.table_name, "Key": key}})
+        for update in update_items:
+            transact_items.append(
+                {
+                    "Update": {
+                        "TableName": self.table_name,
+                        "Key": update["Key"],
+                        "UpdateExpression": update["UpdateExpression"],
+                        "ExpressionAttributeValues": update.get("ExpressionAttributeValues"),
+                    }
+                }
+            )
+
+        logger.debug(f"Processing {len(transact_items)} transactional operations")
+        try:
+            response = self.dynamodb_client.transact_write_items(TransactItems=transact_items)
+            logger.info("Transactional write completed successfully")
+            return response
+        except ClientError as error:
+            logger.error(
+                f"Transactional write failed - Table: {self.table_name} | "
+                f"Error: {error.response['Error']['Code']} | "
+                f"Message: {error.response['Error']['Message']}"
+            )
+            raise error
