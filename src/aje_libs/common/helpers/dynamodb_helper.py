@@ -1,11 +1,14 @@
-from typing import Optional, Dict, List, Any
+
+import json
+import os
 import boto3
-from boto3.dynamodb.conditions import Key
-from botocore.exceptions import ClientError
+from boto3.dynamodb.conditions import Key, Attr
+from botocore.exceptions import ClientError  # Add this import
+from typing import Optional, Dict, List, Any, Union 
 
 from ..logger import custom_logger
 
-logger = custom_logger()
+logger = custom_logger(__name__)
 
 
 class DynamoDBHelper:
@@ -14,9 +17,9 @@ class DynamoDBHelper:
     def __init__(
         self,
         table_name: str,
+        pk_name: str,
+        sk_name: Optional[str] = None, 
         region_name: Optional[str] = None,
-        pk_name: str = "PK",
-        sk_name: str = "SK",
     ) -> None:
         """
         Initialize the DynamoDB helper.
@@ -28,10 +31,9 @@ class DynamoDBHelper:
         """
         self.table_name = table_name
         self.pk_name = pk_name
-        self.sk_name = sk_name
-        session = boto3.Session(region_name=region_name) if region_name else boto3.Session()
-        self.dynamodb_client = session.client("dynamodb")
-        self.dynamodb_resource = session.resource("dynamodb")
+        self.sk_name = sk_name 
+        self.dynamodb_client = boto3.client("dynamodb", region_name=region_name)
+        self.dynamodb_resource = boto3.resource("dynamodb", region_name=region_name)
         self.table = self.dynamodb_resource.Table(self.table_name)
         self._validate_table()
         logger.info(f"Configured helper for DynamoDB table: {table_name}")
@@ -302,7 +304,7 @@ class DynamoDBHelper:
         except ClientError as error:
             logger.error(
                 f"Batch write failed - Table: {self.table_name} | "
-                f"Error: {error.response['Error']['Code']}
+                f"Error: {error.response['Error']['Code']} | "
             f"Message: {error.response['Error']['Message']}"
             )
             raise error

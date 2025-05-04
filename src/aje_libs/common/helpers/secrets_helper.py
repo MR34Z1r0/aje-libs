@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 # Own imports
 from ..logger import custom_logger
 
-logger = custom_logger()
+logger = custom_logger(__name__)
 
 class SecretsHelper:
     """Ayudante personalizado para Secrets Manager que simplifica la obtención de secretos."""
