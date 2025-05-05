@@ -1,8 +1,7 @@
 from typing import Optional, Dict, List, Any, Union
 import json
 import boto3
-import os
-from pinecone.grpc import PineconeGRPC as Pinecone
+from pinecone import Pinecone, Index
 from botocore.exceptions import ClientError
 
 from ...common.logger import custom_logger
@@ -11,42 +10,42 @@ logger = custom_logger(__name__)
 
 
 class PineconeHelper:
-    """Custom helper for Pinecone to simplify vector search operations."""
+    """Custom helper for Pinecone Serverless to simplify vector search operations."""
 
     def __init__(
         self,
         index_name: str,
-        api_key: Optional[str] = None,
-        embeddings_model_id: Optional[str] = None,
-        embeddings_region: Optional[str] = None,
-        max_retrieve_documents: int = 20,
+        api_key: str,
+        embeddings_model_id: str,
+        embeddings_region: str,
+        max_retrieve_documents: int = 5,
         min_threshold: float = 0.3,
     ) -> None:
         """
-        Initialize the Pinecone helper.
+        Initialize the Pinecone helper for serverless operation.
 
         :param index_name: Name of the Pinecone index.
-        :param api_key: Pinecone API key (optional, defaults to env var).
-        :param embeddings_model_id: Bedrock embeddings model ID (optional, defaults to env var).
-        :param embeddings_region: AWS region for Bedrock (optional, defaults to env var).
-        :param max_retrieve_documents: Maximum number of documents to retrieve (default: 20).
+        :param api_key: Pinecone API key (required).
+        :param embeddings_model_id: Bedrock embeddings model ID (required).
+        :param embeddings_region: AWS region for Bedrock (required).
+        :param max_retrieve_documents: Maximum number of documents to retrieve (default: 5).
         :param min_threshold: Minimum similarity threshold for results (default: 0.3).
         """
         self.index_name = index_name
-        self.api_key = api_key or os.getenv("PINECONE_API_KEY")
-        self.embeddings_model_id = embeddings_model_id or os.getenv("BEDROCK_EMBEDDINGS_MODEL_ID")
-        self.embeddings_region = embeddings_region or os.getenv("BEDROCK_EMBEDDINGS_REGION")
+        self.api_key = api_key
+        self.embeddings_model_id = embeddings_model_id
+        self.embeddings_region = embeddings_region
         self.max_retrieve_documents = max_retrieve_documents
         self.min_threshold = min_threshold
         
         # Initialize AWS client for embeddings
         self.bedrock_client = boto3.client("bedrock-runtime", region_name=self.embeddings_region)
         
-        # Initialize Pinecone client
+        # Initialize Pinecone client (Serverless-compatible)
         self.pinecone_client = Pinecone(api_key=self.api_key)
         self.index = self.pinecone_client.Index(self.index_name)
         self._validate_index()
-        logger.info(f"Configured helper for Pinecone index: {index_name}")
+        logger.info(f"Configured helper for Pinecone serverless index: {index_name}")
 
     def _validate_index(self) -> None:
         """Validate that the Pinecone index exists and is accessible."""
@@ -119,7 +118,8 @@ class PineconeHelper:
             if namespace:
                 kwargs["namespace"] = namespace
                 
-            results = self.index.query(**kwargs).get("matches", [])
+            response = self.index.query(**kwargs)
+            results = response.get("matches", [])
             
             # Filter by threshold
             filtered_results = [match for match in results if match["score"] >= self.min_threshold]
@@ -204,8 +204,42 @@ class PineconeHelper:
                 kwargs["namespace"] = namespace
                 
             response = self.index.upsert(**kwargs)
-            logger.info(f"Successfully upserted {response.get('upserted_count', 0)} vectors")
-            return response
+            
+            # Para debugging, imprimamos qué tipo de respuesta estamos recibiendo
+            logger.debug(f"Response type: {type(response)}")
+            logger.debug(f"Response attributes: {dir(response)}")
+            
+            # Handle Pinecone serverless response format
+            upserted_count = 0
+            
+            # Intento 1: Si es un diccionario
+            if isinstance(response, dict):
+                upserted_count = response.get("upserted_count", 0)
+                logger.debug(f"Response is dict, upserted_count: {upserted_count}")
+            # Intento 2: Si tiene el atributo upserted_count directamente
+            elif hasattr(response, "upserted_count"):
+                upserted_count = getattr(response, "upserted_count")
+                logger.debug(f"Response has upserted_count attribute: {upserted_count}")
+            # Intento 3: Si es una respuesta de tipo UpsertResponse
+            elif hasattr(response, "UpsertResponse"):
+                if hasattr(response.UpsertResponse, "upserted_count"):
+                    upserted_count = response.UpsertResponse.upserted_count
+                else:
+                    # Buscar en los atributos anidados
+                    upserted_count = getattr(response.UpsertResponse, "upserted_count", 0)
+            # Intento 4: Si no podemos obtener el conteo, usar la longitud de vectors
+            else:
+                logger.warning(f"Could not determine upserted count from response type: {type(response)}")
+                upserted_count = len(vectors)
+            
+            logger.info(f"Successfully upserted {upserted_count} vectors")
+            
+            # Construir respuesta consistente
+            return {
+                "upserted_count": upserted_count,
+                "status": "success"
+            }
+            
         except Exception as error:
             logger.error(f"Failed to upsert vectors - Index: {self.index_name} | Error: {str(error)}")
             raise error
@@ -232,7 +266,7 @@ class PineconeHelper:
                     kwargs["namespace"] = namespace
                     
                 response = self.index.delete(**kwargs)
-                logger.info(f"Successfully deleted all vectors")
+                logger.info("Successfully deleted all vectors")
                 return response
             except Exception as error:
                 logger.error(f"Failed to delete all vectors - Index: {self.index_name} | Error: {str(error)}")
@@ -245,7 +279,7 @@ class PineconeHelper:
                     kwargs["namespace"] = namespace
                     
                 response = self.index.delete(**kwargs)
-                logger.info(f"Successfully deleted vectors")
+                logger.info("Successfully deleted vectors")
                 return response
             except Exception as error:
                 logger.error(f"Failed to delete vectors - Index: {self.index_name} | Error: {str(error)}")
@@ -270,7 +304,8 @@ class PineconeHelper:
                 kwargs["namespace"] = namespace
                 
             response = self.index.fetch(**kwargs)
-            logger.info(f"Successfully fetched {len(response.get('vectors', {}))} vectors")
+            fetched_vectors = response.get("vectors", {})
+            logger.info(f"Successfully fetched {len(fetched_vectors)} vectors")
             return response
         except Exception as error:
             logger.error(f"Failed to fetch vectors - Index: {self.index_name} | Error: {str(error)}")
