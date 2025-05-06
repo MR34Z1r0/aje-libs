@@ -2,9 +2,9 @@
 import os
 from typing import Dict, List, Optional, Union
 from .pdf_helper import PDFHelper
-from .pptx_helper import PPTXHelper
-from .docx_helper import DOCXHelper
-from .excel_helper import ExcelHelper
+from .ppt_helper import PPTXHelper
+from .doc_helper import DOCXHelper
+from .xls_helper import ExcelHelper
 from ...common.logger import custom_logger
 
 logger = custom_logger(__name__)
