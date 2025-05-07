@@ -16,7 +16,6 @@ setup(
     packages=find_packages(where="src"),
     install_requires=[
         # Lista tus dependencias aquí, por ejemplo:
-        "aws-cdk-lib>=2.0.0",
         "aws-lambda-powertools>=3.11.0",
     ],
     python_requires=">=3.10",
