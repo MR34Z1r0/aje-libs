@@ -72,3 +72,8 @@ Configs: Modelos de configuración para recursos CDK
 
 Utils
 TagUtils: Funciones para manejo de tags estandarizados
+
+
+```bash
+pip install --no-cache-dir -t python/ /d/WORKSPACE-GIT/CDK/aje-libs
+```

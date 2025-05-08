@@ -2,4 +2,4 @@
 from .model_factory import ModelFactory
 from .base_model import BaseBedrockModel
 
-__all__ = ['BedrockHelper', 'ModelFactory', 'BaseBedrockModel']
+__all__ = ['ModelFactory', 'BaseBedrockModel']

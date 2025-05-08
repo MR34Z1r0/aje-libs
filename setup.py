@@ -13,7 +13,7 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/MR34Z1r0/aje-libs",
     package_dir={"": "src"},
-    packages=find_packages(where="src"),
+    packages=find_packages(where="src", include=["aje_libs*"]),
     install_requires=[
         # Lista tus dependencias aquí, por ejemplo:
         "aws-lambda-powertools>=3.11.0",
