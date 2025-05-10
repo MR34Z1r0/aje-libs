@@ -172,3 +172,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+layer_*/
+installer_*/
+2.2.0
+2.31.0
+3.0.0
+4.0.39
