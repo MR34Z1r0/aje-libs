@@ -31,4 +31,7 @@ class MetaModel(BaseBedrockModel):
     
     @property
     def supported_features(self) -> List[str]:
-        return ["text_generation"]
+        if self.model_id == "us.meta.llama3-2-11b-instruct-v1:0" or self.model_id == "us.meta.llama3-2-90b-instruct-v1:0":
+            return ["text_generation", "conversation", "multimodal"]
+        else:
+            return ["text_generation", "conversation"]

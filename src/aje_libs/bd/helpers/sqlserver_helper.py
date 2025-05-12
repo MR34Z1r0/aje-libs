@@ -1,7 +1,7 @@
 # src/aje_libs/common/helpers/sqlserver_helper.py
 import pyodbc
 from typing import List, Dict, Any, Optional, Union, Tuple
-from ..logger import custom_logger
+from ...common.logger import custom_logger
 
 logger = custom_logger(__name__)
 
