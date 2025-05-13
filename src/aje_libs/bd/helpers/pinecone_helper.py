@@ -117,10 +117,12 @@ class PineconeHelper:
                 
             if namespace:
                 kwargs["namespace"] = namespace
-                
+            
+            logger.info(f"kwargs: {kwargs}")    
             response = self.index.query(**kwargs)
             results = response.get("matches", [])
-            
+            logger.info(f"Found {len(results)}")    
+            logger.info(f"Details: {results}")
             # Filter by threshold
             filtered_results = [match for match in results if match["score"] >= self.min_threshold]
             logger.info(f"Found {len(filtered_results)} matches above threshold in Pinecone")
