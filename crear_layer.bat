@@ -40,10 +40,10 @@ python -m pip install --upgrade pip
 
 :: Crear layers
 call :create_layer "layer_aje_libs" "%AJELIB_DIR%"
-call :create_layer "layer_odbc" "pyodbc>=4.0.39"
+call :create_layer "layer_pyodbc" "pyodbc>=4.0.39"
 call :create_layer "layer_docs" "python-docx>=0.8.11 python-pptx>=0.6.21 openpyxl>=3.1.0 PyPDF2>=3.0.0 lxml==4.9.2"
 call :create_layer "layer_pinecone" "pinecone>=2.2.0"
-call :create_layer "layer_pinecone" "requests>=2.31.0"
+call :create_layer "layer_requests" "requests>=2.31.0"
 
 :: Desactivar entorno virtual
 call venv\Scripts\deactivate.bat
