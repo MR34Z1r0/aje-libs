@@ -1,0 +1,51 @@
+
+D:\WORKSPACE-GIT\CDK\aje-libs>SET CURRENT_DIR=D:\WORKSPACE-GIT\CDK\aje-libs\ 
+
+D:\WORKSPACE-GIT\CDK\aje-libs>SET CURRENT_DIR=D:\WORKSPACE-GIT\CDK\aje-libs 
+
+D:\WORKSPACE-GIT\CDK\aje-libs>pushd "D:\WORKSPACE-GIT\CDK\aje-libs\..\aje-libs" 
+
+D:\WORKSPACE-GIT\CDK\aje-libs>SET AJELIB_DIR=D:\WORKSPACE-GIT\CDK\aje-libs 
+
+D:\WORKSPACE-GIT\CDK\aje-libs>popd
+
+D:\WORKSPACE-GIT\CDK\aje-libs>SET PYTHON_VERSION=3.10 
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo =================================== 
+===================================
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo AWS Lambda Layers Generator 
+AWS Lambda Layers Generator
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo =================================== 
+===================================
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo.
+
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo Este script generará los siguientes layers para AWS Lambda: 
+Este script generará los siguientes layers para AWS Lambda:
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo  - layer_aje_libs 
+ - layer_aje_libs
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo  - layer_pyodbc 
+ - layer_pyodbc
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo  - layer_docs 
+ - layer_docs
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo  - layer_pinecone 
+ - layer_pinecone
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo.
+
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo Los layers se crearán en: D:\WORKSPACE-GIT\CDK\aje-libs 
+Los layers se crearán en: D:\WORKSPACE-GIT\CDK\aje-libs
+
+D:\WORKSPACE-GIT\CDK\aje-libs>echo.
+
+
+D:\WORKSPACE-GIT\CDK\aje-libs>set /p CONFIRM=¿Desea continuar? (S/N):  
+¿Desea continuar? (S/N): 

@@ -1,7 +1,7 @@
 from typing import Optional, Dict, List, Any, Union
 import json
 import boto3
-from pinecone import Pinecone, Index
+from pinecone import Pinecone
 from botocore.exceptions import ClientError
 
 from ...common.logger import custom_logger
