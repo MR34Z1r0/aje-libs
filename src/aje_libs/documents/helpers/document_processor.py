@@ -21,7 +21,7 @@ class DocumentProcessor:
                 from .pdf_helper import PDFHelper
                 self.pdf_helper = PDFHelper()
                 return self.pdf_helper.extract_text(file_path)
-            elif file_extension == 'pptx' or file_extension == 'ppt':
+            elif file_extension == 'pptx': # or file_extension == 'ppt':
                 from .ppt_helper import PPTXHelper
                 self.pptx_helper = PPTXHelper()
                 return self.pptx_helper.extract_text(file_path)
