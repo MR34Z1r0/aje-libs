@@ -73,7 +73,8 @@ class BedrockHelper:
         model: Union[str, BedrockModel],
         messages: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
-        parameters: Optional[Dict[str, Any]] = None
+        parameters: Optional[Dict[str, Any]] = None,
+        tool_config: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Usa la API de Converse para modelos que la soportan.
@@ -102,14 +103,23 @@ class BedrockHelper:
                     "maxTokens": parameters.get("max_tokens", 1024),
                     "temperature": parameters.get("temperature", 0.3),
                     "topP": parameters.get("top_p", 0.2)
+                },
+                "additionalModelRequestFields": {
+                    "inferenceConfig": {
+                        "topK": 1  # Este es requerido para tool calling en Nova
+                    }
                 }
             }
             
             if system_prompt:
                 request_body["system"] = [{"text": system_prompt}]
+
+            if tool_config:
+                request_body["toolConfig"] = tool_config
             
             response = self.bedrock_client.converse(**request_body)
-            
+
+            '''
             content = response['output']['message']['content'][0]['text']
             usage = response['usage']
             
@@ -120,6 +130,8 @@ class BedrockHelper:
                 "total_tokens": usage['inputTokens'] + usage['outputTokens'],
                 "stop_reason": response.get('stopReason', '')
             }
+            '''
+            return response
             
         except ClientError as error:
             logger.error(f"Error en converse: {error}")
