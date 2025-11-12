@@ -95,13 +95,12 @@ class SQLServerExtractor(IExtractor):
         """Fallback to pymssql connection"""
         import pymssql
         
-        self.logger.info("=" * 80)
-        self.logger.info("ESTABLISHING DATABASE CONNECTION (PyMSSQL)")
-        self.logger.info("=" * 80)
-        self.logger.info(f"Server: {self.config.server}")
-        self.logger.info(f"Database: {self.config.database}")
-        self.logger.info(f"User: {self.config.username}")
-        self.logger.info(f"Port: {self.config.port or 1433}")
+        # Agrupar información de conexión en un solo mensaje
+        self.logger.info(
+            f"🔌 Conectando a SQL Server (PyMSSQL) - "
+            f"Server: {self.config.server}, Database: {self.config.database}, "
+            f"User: {self.config.username}, Port: {self.config.port or 1433}"
+        )
         
         self.connection = pymssql.connect(
             server=self.config.server,
@@ -114,8 +113,7 @@ class SQLServerExtractor(IExtractor):
             charset='utf8'
         )
         
-        self.logger.info("✅ PyMSSQL connection established")
-        self.logger.info("=" * 80)
+        self.logger.info("✅ Conexión establecida exitosamente")
     
     def test_connection(self) -> bool:
         """Test connection to SQL Server"""
@@ -147,8 +145,12 @@ class SQLServerExtractor(IExtractor):
                 if not self.connection and not self.engine:
                     self.connect()
                 
-                self.logger.info(f"🔍 Query Attempt {attempt + 1}/{self.max_retries}")
-                self.logger.info(f"Query preview: {query}")
+                # Mostrar query ANTES de ejecutarse para validación
+                if attempt == 0:
+                    self.logger.info(f"📝 SQL Query a ejecutar:\n{query}")
+                else:
+                    self.logger.info(f"🔄 Reintentando query (intento {attempt + 1}/{self.max_retries})")
+                    self.logger.info(f"📝 SQL Query:\n{query}")
                 
                 start_time = datetime.now()
                 
@@ -171,10 +173,11 @@ class SQLServerExtractor(IExtractor):
                 # Fix duplicate column names
                 df = self._fix_duplicate_columns(df)
                 
-                self.logger.info(f"✅ Query executed successfully")
-                self.logger.info(f"Execution time: {duration:.2f}s")
-                self.logger.info(f"Rows returned: {len(df):,}")
-                self.logger.info(f"Columns: {len(df.columns)}")
+                # Agrupar resultados de query en un solo mensaje
+                self.logger.info(
+                    f"✅ Query ejecutada exitosamente - "
+                    f"Tiempo: {duration:.2f}s, Filas: {len(df):,}, Columnas: {len(df.columns)}"
+                )
                 
                 return df
                 
@@ -256,52 +259,39 @@ class SQLServerExtractor(IExtractor):
         Extract data using query - main extraction method
         """
         try:
-            self.logger.info("=" * 80)
-            self.logger.info("DATA EXTRACTION STARTED")
-            self.logger.info("=" * 80)
-            
             if chunk_size and order_by:
-                self.logger.info("Extraction mode: CHUNKED")
-                self.logger.info(f"Chunk size: {chunk_size:,}")
-                self.logger.info(f"Order by: {order_by}")
-                self.logger.info("-" * 80)
-                self.logger.info("SQL Query:")
-                self.logger.info(query)
-                self.logger.info("=" * 80)
+                # Agrupar información de extracción chunked
+                self.logger.info(
+                    f"📊 Iniciando extracción CHUNKED - "
+                    f"Chunk size: {chunk_size:,}, Order by: {order_by}"
+                )
+                self.logger.debug(f"SQL Query: {query}")
                 
                 # Use chunked extraction
                 chunk_count = 0
                 for chunk_df in self.execute_query_chunked(query, chunk_size, order_by, params):
                     chunk_count += 1
-                    self.logger.info(f"Yielding chunk {chunk_count} with {len(chunk_df):,} rows")
+                    self.logger.debug(f"Chunk {chunk_count}: {len(chunk_df):,} filas")
                     yield chunk_df
                 
-                self.logger.info(f"Chunked extraction completed - Total chunks yielded: {chunk_count}")
+                self.logger.info(f"✅ Extracción chunked completada - Total chunks: {chunk_count}")
             else:
-                self.logger.info("Extraction mode: SINGLE QUERY")
-                self.logger.info("-" * 80)
-                self.logger.info("SQL Query:")
-                self.logger.info(query)
-                self.logger.info("=" * 80)
+                # Agrupar información de extracción simple
+                self.logger.info("📊 Iniciando extracción SINGLE QUERY")
+                self.logger.debug(f"SQL Query: {query}")
                 
                 df = self.execute_query(query, params)
                 
                 if not df.empty:
-                    self.logger.info(f"Yielding single result with {len(df):,} rows")
+                    self.logger.debug(f"Resultado: {len(df):,} filas")
                     yield df
                 else:
-                    self.logger.warning("Query returned empty result")
+                    self.logger.warning("⚠️ Query retornó resultado vacío")
             
-            self.logger.info("=" * 80)
-            self.logger.info("DATA EXTRACTION COMPLETED")
-            self.logger.info("=" * 80)
+            self.logger.info("✅ Extracción de datos completada")
                     
         except Exception as e:
-            self.logger.error("=" * 80)
-            self.logger.error("❌ DATA EXTRACTION FAILED")
-            self.logger.error("=" * 80)
-            self.logger.error(f"Error: {str(e)}")
-            self.logger.error(f"Error type: {type(e).__name__}")
+            self.logger.error(f"❌ Error en extracción de datos: {type(e).__name__} - {str(e)}")
             
             import traceback
             self.logger.error("Traceback:")

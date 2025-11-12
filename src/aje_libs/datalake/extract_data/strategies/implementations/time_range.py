@@ -17,9 +17,8 @@ class TimeRangeStrategy(ExtractionStrategy):
     
     def build_extraction_params(self) -> ExtractionParams:
         """Construye parámetros para carga por rango de tiempo"""
-        logger.info(f"=== TIME RANGE STRATEGY - Building Params ===")
-        logger.info(f"Table: {self.extraction_config.table_name}")
-        logger.info(f"Load Mode: {self.extraction_config.load_mode.value}")
+        load_mode = self.extraction_config.load_mode
+        logger.debug(f"TimeRangeStrategy - Table: {self.extraction_config.table_name}, Mode: {load_mode.value}")
         
         # TIME RANGE NO USA WATERMARKS
         if self.watermark_storage:
@@ -28,13 +27,12 @@ class TimeRangeStrategy(ExtractionStrategy):
         # 🔄 RESET mode: El cleanup ya fue realizado por el orchestrator
         # Se comporta igual que INITIAL (carga completa)
         if self.extraction_config.load_mode == LoadMode.RESET:
-            logger.info("🔄 RESET mode detected - Cleanup already performed by orchestrator")
-            logger.info("🔄 RESET mode - behaves like INITIAL: load ALL historical data; no watermark tracking")
+            logger.debug("RESET mode - cargando todos los datos históricos (sin watermark)")
             return self._build_initial_load_params()
         
         # MODO INITIAL: Carga histórica completa
         if self.extraction_config.load_mode == LoadMode.INITIAL:
-            logger.info("🆕 INITIAL mode - load ALL historical data; no watermark tracking for time range")
+            logger.debug("INITIAL mode - cargando todos los datos históricos (sin watermark)")
             return self._build_initial_load_params()
         
         # MODO NORMAL: NUNCA usar particionado (ignorar PARTITION_MODE)
@@ -357,8 +355,6 @@ class TimeRangeStrategy(ExtractionStrategy):
     
     def validate(self) -> bool:
         """Valida configuración para time range"""
-        logger.info("=== TIME RANGE STRATEGY VALIDATION ===")
-        
         required_fields = [
             ('stage_table_name', self.table_config.stage_table_name),
             ('source_schema', self.table_config.source_schema),
@@ -368,21 +364,18 @@ class TimeRangeStrategy(ExtractionStrategy):
         
         validation_errors = []
         for field_name, field_value in required_fields:
-            logger.info(f"Checking {field_name}: '{field_value}'")
+            logger.debug(f"Validando {field_name}: '{field_value}'")
             
             if field_value is None:
                 validation_errors.append(f"{field_name} is None")
             elif not str(field_value).strip():
                 validation_errors.append(f"{field_name} is empty")
-            else:
-                logger.info(f"  ✅ {field_name} is valid")
         
         if validation_errors:
-            logger.error("❌ VALIDATION FAILED:")
+            logger.error(f"❌ Validación fallida - Errores: {len(validation_errors)}")
             for error in validation_errors:
                 logger.error(f"  - {error}")
             return False
         
-        logger.info("✅ ALL VALIDATION CHECKS PASSED")
-        logger.info("=== END VALIDATION ===")
+        logger.debug("✅ Todas las validaciones pasaron")
         return True

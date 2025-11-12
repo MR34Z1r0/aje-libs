@@ -35,19 +35,45 @@ class Settings:
         try:
             from dotenv import load_dotenv
         except ImportError:
-            print("⚠️ python-dotenv no está instalado. Instala con: pip install python-dotenv")
+            # Solo mostrar si realmente es necesario (cuando falte el .env)
             return
 
-        path = Path(env_path).expanduser() if env_path else DEFAULT_ENV_PATH
-        if not path.exists():
-            print(f"⚠️ No se encontró el archivo .env en: {path}")
+        # Si se proporciona una ruta explícita, usarla
+        if env_path:
+            path = Path(env_path).expanduser()
+            if path.exists():
+                try:
+                    load_dotenv(path)
+                    return
+                except Exception as exc:
+                    print(f"⚠️ Error al cargar .env desde {path}: {exc}")
+            else:
+                print(f"⚠️ No se encontró .env en: {path}")
             return
 
-        try:
-            load_dotenv(path)
-            print(f"✅ Archivo .env cargado desde: {path}")
-        except Exception as exc:
-            print(f"⚠️ No se pudo cargar el archivo .env ({path}): {exc}")
+        # Buscar .env desde el directorio de trabajo actual hacia arriba
+        current_dir = Path.cwd()
+        for parent in [current_dir] + list(current_dir.parents):
+            env_file = parent / ".env"
+            if env_file.exists():
+                try:
+                    load_dotenv(env_file)
+                    return
+                except Exception as exc:
+                    print(f"⚠️ Error al cargar .env desde {env_file}: {exc}")
+                    continue
+
+        # Como último recurso, intentar con DEFAULT_ENV_PATH
+        if DEFAULT_ENV_PATH.exists():
+            try:
+                load_dotenv(DEFAULT_ENV_PATH)
+                return
+            except Exception as exc:
+                print(f"⚠️ Error al cargar .env desde {DEFAULT_ENV_PATH}: {exc}")
+                return
+
+        # Solo mostrar error si no se encontró en ningún lugar
+        print(f"⚠️ No se encontró archivo .env (buscado desde: {current_dir})")
 
     def _detect_aws_glue(self) -> bool:
         return "AWS_EXECUTION_ENV" in os.environ or "GLUE_VERSION" in os.environ
@@ -62,15 +88,12 @@ class Settings:
 
             if not self.is_aws_glue and profile_name:
                 boto3.setup_default_session(profile_name=profile_name, region_name=region_name)
-                print(f"✅ AWS Session configurada con profile: {profile_name}, región: {region_name}")
             elif not self.is_aws_glue:
                 boto3.setup_default_session(region_name=region_name)
-                print(f"✅ AWS Session configurada con credenciales por defecto, región: {region_name}")
-            else:
-                print(f"✅ Entorno Glue detectado, usando IAM role, región: {region_name}")
+            # En Glue no se configura sesión explícitamente, usa IAM role automáticamente
         except Exception as exc:
-            print(f"⚠️ No se pudo configurar la sesión de AWS: {exc}")
-            print("Continuando sin configurar sesión AWS…")
+            # Solo mostrar errores, no éxitos
+            print(f"⚠️ Error al configurar sesión AWS: {exc}")
 
     def _load_configuration(self) -> Dict[str, Any]:
         if self.is_aws_glue:
@@ -81,7 +104,7 @@ class Settings:
         try:
             from awsglue.utils import getResolvedOptions
         except ImportError:
-            print("⚠️ Librerías de Glue no disponibles. Usando configuración local.")
+            # Fallback silencioso a configuración local
             return self._load_local_config()
 
         try:
@@ -131,8 +154,7 @@ class Settings:
                 "AWS_PROFILE": None,
             }
         except Exception as exc:
-            print(f"⚠️ No se pudo cargar configuración de Glue: {exc}")
-            print("👉 Usando configuración local…")
+            # Fallback silencioso a configuración local en caso de error
             return self._load_local_config()
 
     def _require_env_vars(self, required_vars: list[str]) -> None:

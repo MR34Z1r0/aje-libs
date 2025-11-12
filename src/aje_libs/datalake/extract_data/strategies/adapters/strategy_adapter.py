@@ -23,11 +23,11 @@ class StrategyAdapter(IExtractionStrategy):
         self.partition_formatter = PartitionFormatter(partition_format)
         
         # Log del formato que se usará
-        logger.info(f"🔧 StrategyAdapter initialized with partition format: {self.partition_formatter.format_template}")
+        logger.debug(f"StrategyAdapter inicializado - Formato de partición: {self.partition_formatter.format_template}")
 
     def generate_queries(self) -> List[Dict[str, Any]]:
         """Adapta el nuevo método build_extraction_params al formato esperado"""
-        logger.info("=== STRATEGY ADAPTER - Generating Queries ===")
+        logger.debug("Strategy Adapter - Generating queries")
         
         # Obtener parámetros de extracción
         self.extraction_params = self.new_strategy.build_extraction_params()
@@ -77,7 +77,8 @@ class StrategyAdapter(IExtractionStrategy):
         if where_conditions:
             min_max_query += f" WHERE {' AND '.join(where_conditions)}"
         
-        logger.info(f"Generated Min/Max query: {min_max_query}")
+        logger.info("🔍 Query MIN/MAX generada")
+        logger.info(f"📝 SQL Query MIN/MAX:\n{min_max_query}")
         
         return [{
             'query': min_max_query,

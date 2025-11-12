@@ -15,22 +15,18 @@ class IncrementalStrategy(ExtractionStrategy):
         return ExtractionStrategyType.INCREMENTAL
     
     def build_extraction_params(self) -> ExtractionParams:
-        logger.info(f"=== INCREMENTAL STRATEGY ===")
-        logger.info(f"Table: {self.extraction_config.table_name}")
-        logger.info(f"Load Mode: {self.extraction_config.load_mode.value}")
-        
         load_mode = self.extraction_config.load_mode
+        logger.debug(f"IncrementalStrategy - Table: {self.extraction_config.table_name}, Mode: {load_mode.value}")
         
         # 🔄 RESET mode: El cleanup ya fue realizado por el orchestrator
         # Se comporta igual que INITIAL (carga completa + guarda watermark)
         if load_mode == LoadMode.RESET:
-            logger.info("🔄 RESET mode - Cleanup already performed by orchestrator")
-            logger.info("🔄 RESET mode - doing full load + saving watermark")
+            logger.debug("RESET mode - haciendo full load + guardando watermark")
             return self._build_initial_load_params()
         
         # 🆕 INITIAL mode: Hacer carga inicial (full + watermark)
         elif load_mode == LoadMode.INITIAL:
-            logger.info("🆕 INITIAL mode - doing full load + saving watermark")
+            logger.debug("INITIAL mode - haciendo full load + guardando watermark")
             return self._build_initial_load_params()
         
         # 📊 NORMAL mode: Carga incremental desde watermark
@@ -150,27 +146,24 @@ class IncrementalStrategy(ExtractionStrategy):
         
         validation_errors = []
         for field_name, field_value in required_fields:
-            logger.info(f"Checking {field_name}: '{field_value}'")
+            logger.debug(f"Validando {field_name}: '{field_value}'")
             
             if field_value is None:
                 validation_errors.append(f"{field_name} is None")
             elif not str(field_value).strip():
                 validation_errors.append(f"{field_name} is empty")
-            else:
-                logger.info(f"  ✅ {field_name} is valid")
         
         # Validaciones específicas para incremental
         incremental_errors = self._validate_incremental_config()
         validation_errors.extend(incremental_errors)
         
         if validation_errors:
-            logger.error("❌ VALIDATION FAILED:")
+            logger.error(f"❌ Validación fallida - Errores: {len(validation_errors)}")
             for error in validation_errors:
                 logger.error(f"  - {error}")
             return False
         
-        logger.info("✅ ALL VALIDATION CHECKS PASSED")
-        logger.info("=== END VALIDATION ===")
+        logger.debug("✅ Todas las validaciones pasaron")
         return True
     
     def estimate_resources(self) -> dict:

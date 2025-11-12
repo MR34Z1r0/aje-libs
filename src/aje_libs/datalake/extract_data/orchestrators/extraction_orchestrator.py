@@ -53,7 +53,7 @@ class DataExtractionOrchestrator:
         self.name_logger = f"{__name__}.extractor"
         
         if self.process_guid:
-            self.logger.info(f"🆔 Orchestrator initialized with process_guid: {self.process_guid}")
+            self.logger.debug(f"Orchestrator inicializado - process_guid: {self.process_guid}")
         
         # Components
         self.extractor: Optional[IExtractor] = None
@@ -74,18 +74,16 @@ class DataExtractionOrchestrator:
             # Initialize all components
             self._initialize_components()
             
+            # Agrupar información de inicio
             self.logger.info(
-                f"🚀 Starting extraction - "
-                f"table: {self.extraction_config.table_name} "
-                f"process_guid: {self.process_guid} "
-                f"load_mode: {self.extraction_config.load_mode.value}")
+                f"🚀 Iniciando extracción - "
+                f"Tabla: {self.extraction_config.table_name}, "
+                f"Mode: {self.extraction_config.load_mode.value}, "
+                f"Process GUID: {self.process_guid}"
+            )
             
             # 🧹 RESET MODE: Ejecutar cleanup ANTES de log_start
             if self.extraction_config.load_mode == LoadMode.RESET:
-                self.logger.info(
-                    f"🔄 Modo RESET detectado - Ejecutando limpieza de datos antes de extracción"
-                )
-                
                 cleanup_result = self._execute_reset_cleanup()
                 
                 if not cleanup_result.get('success', False):
@@ -94,17 +92,12 @@ class DataExtractionOrchestrator:
                         f"Errores: {cleanup_result.get('errors', [])}"
                     )
                     self.logger.error(error_msg)
-                    # Continuar con la extracción aunque el cleanup tenga errores parciales
-                    # pero registrar el warning
-                    self.logger.warning(
-                        "Continuando con extracción después de errores en cleanup. "
-                        "Revisar errores en logs."
-                    )
+                    self.logger.warning("Continuando con extracción después de errores en cleanup")
                 else:
-                    self.logger.info(
-                        f"✅ Limpieza RESET completada exitosamente - "
-                        f"Total items eliminados: {cleanup_result.get('total_items_deleted', 0)}"
-                    )
+                    # Solo mostrar si se eliminaron items
+                    items_deleted = cleanup_result.get('total_items_deleted', 0)
+                    if items_deleted > 0:
+                        self.logger.info(f"✅ Limpieza RESET completada - {items_deleted} items eliminados")
             
             # ✅ Log start DESPUÉS de que el cleanup se complete (en modo RESET)
             # o inmediatamente (en otros modos)
@@ -246,7 +239,7 @@ class DataExtractionOrchestrator:
             self.logger.info(f"Watermark storage initialized: {type(self.watermark_storage).__name__}")
         else:
             self.watermark_storage = None
-            self.logger.info("Watermark storage not needed for this strategy")
+            self.logger.debug("Watermark storage not needed for this strategy")
 
         # Create loader
         loader_config = self._build_loader_config()
@@ -320,7 +313,7 @@ class DataExtractionOrchestrator:
             if self.table_config and hasattr(self.table_config, 'partition_format'):
                 partition_format = self.table_config.partition_format
                 self.partition_formatter = PartitionFormatter(partition_format)
-                self.logger.info(f"Partition format loaded: {partition_format}")
+                self.logger.debug(f"Formato de partición cargado: {partition_format}")
             else:
                 self.partition_formatter = PartitionFormatter()
                 self.logger.info("Using default partition format")
@@ -331,19 +324,13 @@ class DataExtractionOrchestrator:
     def _build_table_config(self, table_row: Dict[str, Any]) -> TableConfig:
         """Build TableConfig from CSV row""" 
         
-        self.logger.info("=== BUILDING TABLE CONFIG ===")
-        self.logger.info(f"Raw CSV row LOAD_TYPE: '{table_row.get('LOAD_TYPE', '')}'")
-        
         # Apply load type logic - default to 'full' if not explicitly set
         load_type = table_row.get('LOAD_TYPE', '').strip()
-        self.logger.info(f"After strip - load_type: '{load_type}'")
         
         if not load_type:
             load_type = 'full'
-            self.logger.info(f"Empty load_type, setting to 'full': '{load_type}'")
         
-        self.logger.info(f"Final load_type: '{load_type}'")
-        self.logger.info("=== END BUILDING TABLE CONFIG ===")
+        self.logger.debug(f"Table config - load_type: '{load_type}'")
         
         return TableConfig(
             stage_table_name=table_row.get('STAGE_TABLE_NAME', ''),
@@ -449,39 +436,26 @@ class DataExtractionOrchestrator:
     def _validate_configuration(self):
         """Validate all configurations"""
         
-        self.logger.info("=== STARTING CONFIGURATION VALIDATION ===")
-        
         try:
-            self.logger.info("Validating strategy configuration...")
             if not self.strategy.validate_config():
                 self.logger.error("❌ Strategy validation failed")
                 raise ConfigurationError("Invalid strategy configuration")
-            else:
-                self.logger.info("✅ Strategy validation passed")
+            # Validación exitosa - no loguear, es el caso normal
         except Exception as e:
             self.logger.error(f"Error during strategy validation: {str(e)}")
-            self.logger.error(f"Exception type: {type(e).__name__}") 
             raise
-        
-        self.logger.info("=== CONFIGURATION VALIDATION COMPLETED ===")
     
     def _execute_extraction_strategy(self) -> ExtractionResult:
         """Execute the selected extraction strategy"""
         start_time = datetime.now()
         strategy_name = self.strategy.get_strategy_name()
         
-        self.logger.info(
-            f"📊 Executing {strategy_name} strategy - "
-            f"table: {self.extraction_config.table_name} "
-            f"process_guid: {self.process_guid}"
-        )
-        
         # Get destination path
         destination_path = self._build_destination_path()
         
         # Delete existing files for strategies that require it
         if self.extraction_config.load_mode in [LoadMode.INITIAL, LoadMode.RESET]:
-            self.logger.info(f"{strategy_name} strategy - deleting existing files")
+            self.logger.debug(f"Eliminando archivos existentes para estrategia {strategy_name}")
             self.loader.delete_existing(destination_path)
         
         # 🔧 FIX: Generate queries based on strategy
@@ -593,35 +567,34 @@ class DataExtractionOrchestrator:
         query = query_metadata['query']
         metadata = query_metadata.get('metadata', {})
         
+        # Agrupar información de thread y estrategia en un solo mensaje
+        strategy_name = self.strategy.get_strategy_name()
         self.logger.info(
-            f"🔍 Thread {thread_id} - Starting query execution - "
+            f"🔍 Thread {thread_id} - Ejecutando query ({strategy_name}) - "
             f"process_guid: {self.process_guid}"
         )
         
+        # Mostrar query ANTES de ejecutarse para validación
+        self.logger.info(f"📝 SQL Query (Thread {thread_id}):\n{query}")
+        
         if metadata.get('query_type') == 'min_max' and metadata.get('needs_partitioned_queries'):
             return self._handle_min_max_query(query, metadata)  # Ya retorna 3 valores
- 
+
         files_created = []
         files_metadata = []
         total_records = 0
         max_extracted_value = None
         
-        try:   
-            self.logger.info(
-                f"🔍 Thread {thread_id} - Strategy: {self.strategy.get_strategy_name()} - "
-                f"process_guid: {self.process_guid}"
-            )         
-            self.logger.info(f"🔍 DEBUG Partition column: '{self.table_config.partition_column}'")
-            self.logger.info(f"🔍 DEBUG Watermark storage available: {self.watermark_storage is not None}")
-
+        try:         
             # Extract data parameters
             chunk_size = metadata.get('chunk_size', self.extraction_config.chunk_size)
             chunking_params = metadata.get('chunking_params', {})
             order_by = chunking_params.get('order_by')
 
-            self.logger.info(f"🔍 DEBUG Chunk size: {chunk_size}")
-            self.logger.info(f"🔍 DEBUG Order by: {order_by}")
-            self.logger.info(f"🔍 DEBUG Chunking params: {chunking_params}")
+            # Debug info solo en modo DEBUG
+            self.logger.debug(f"Partition column: '{self.table_config.partition_column}'")
+            self.logger.debug(f"Watermark storage available: {self.watermark_storage is not None}")
+            self.logger.debug(f"Chunk size: {chunk_size}, Order by: {order_by}, Chunking params: {chunking_params}")
 
             data_iterator = self.extractor.extract_data(query, chunk_size, order_by)
             destination_path = metadata.get('destination_path', self._build_destination_path())
@@ -629,12 +602,10 @@ class DataExtractionOrchestrator:
             chunk_count = 0
             for chunk_df in data_iterator:
                 if chunk_df is not None and not chunk_df.empty:
-                    self.logger.info(f"🔍 Processing chunk {chunk_count + 1} with {len(chunk_df)} rows")
-                    self.logger.info(
-                        f"🔍 Thread {thread_id} - Processing chunk {chunk_count + 1} "
-                        f"with {len(chunk_df)} rows - "
-                        f"process_guid: {self.process_guid}"
-                    )
+                    chunk_count += 1
+                    # Solo loguear cada 10 chunks o el primero para no saturar logs
+                    if chunk_count == 1 or chunk_count % 10 == 0:
+                        self.logger.debug(f"Chunk {chunk_count}: {len(chunk_df)} filas")
                     
                     # 🎯 ACTUALIZAR MAX VALUE (para watermark)
                     if (self.table_config.partition_column and 
@@ -642,7 +613,7 @@ class DataExtractionOrchestrator:
                         chunk_max = chunk_df[self.table_config.partition_column].max()
                         if max_extracted_value is None or chunk_max > max_extracted_value:
                             max_extracted_value = chunk_max
-                            self.logger.info(f"🔍 Updated max value: {max_extracted_value}")
+                            self.logger.debug(f"Max value actualizado: {max_extracted_value}")
                     
                     # ✅ CARGAR CHUNK UNA SOLA VEZ
                     file_path = self.loader.load_dataframe(
@@ -662,8 +633,7 @@ class DataExtractionOrchestrator:
             is_incremental = strategy_name in ['incremental', 'incrementalstrategy']
             should_track = metadata.get('should_track_watermark', False)
             
-            self.logger.info(f"🔍 DEBUG is_incremental: {is_incremental}")
-            self.logger.info(f"🔍 DEBUG should_track: {should_track}")
+            self.logger.debug(f"is_incremental: {is_incremental}, should_track: {should_track}")
             
             if (max_extracted_value is not None and 
                 self.watermark_storage and 
@@ -699,7 +669,7 @@ class DataExtractionOrchestrator:
                     )
                     self.logger.info(f"✅ Watermark saved: {max_extracted_value}")
             else:
-                self.logger.info("🔍 No watermark to save")
+                self.logger.debug("No watermark to save")
             
             return files_created, files_metadata, total_records
             
@@ -709,7 +679,10 @@ class DataExtractionOrchestrator:
     
     def _handle_min_max_query(self, min_max_query: str, metadata: Dict[str, Any]) -> tuple:
         """Maneja la ejecución de query MIN/MAX y genera queries particionadas"""
-        self.logger.info("🔍 Handling MIN/MAX query for partitioned load")
+        self.logger.info("🔍 Ejecutando query MIN/MAX para carga particionada")
+        
+        # Mostrar query MIN/MAX ANTES de ejecutarse para validación
+        self.logger.info(f"📝 SQL Query MIN/MAX:\n{min_max_query}")
         
         try:
             # 1. Ejecutar query MIN/MAX
@@ -845,7 +818,8 @@ class DataExtractionOrchestrator:
         
         query = f"SELECT {columns} FROM {from_clause} WHERE {' AND '.join(where_conditions)}"
         
-        self.logger.info(f"🔍 Generated partitioned query: Range {start_value}-{end_value}")
+        self.logger.info(f"🔍 Query particionada generada - Rango: {start_value}-{end_value}")
+        self.logger.info(f"📝 SQL Query particionada:\n{query}")
         return query
 
     def _execute_partitioned_queries(self, partitioned_queries: List[Dict[str, Any]]) -> tuple:
@@ -984,14 +958,11 @@ class DataExtractionOrchestrator:
         }
         
         try:
-            self.logger.info("🧹 Iniciando proceso de limpieza RESET")
-            
             # 1. Limpiar datos en S3 Raw bucket
             if self.loader:
                 try:
                     # 🔧 RESET: Usar ruta BASE sin particiones para limpiar TODO
                     table_base_path = self._build_table_base_path()
-                    self.logger.info(f"🧹 Limpiando S3 - path: {table_base_path} (RESET: limpieza completa sin particiones)")
                     
                     s3_result = self.loader.cleanup_table_data(table_base_path)
                     s3_result['service_name'] = 'S3Loader'
@@ -1003,10 +974,10 @@ class DataExtractionOrchestrator:
                     if s3_result.get('errors'):
                         consolidated_result['errors'].extend(s3_result['errors'])
                     
-                    self.logger.info(
-                        f"✅ S3 cleanup completado - "
-                        f"items eliminados: {s3_result.get('items_deleted', 0)}"
-                    )
+                    # Solo loguear si hay items eliminados
+                    items_deleted = s3_result.get('items_deleted', 0)
+                    if items_deleted > 0:
+                        self.logger.debug(f"S3 cleanup: {items_deleted} objetos eliminados")
                 except Exception as e:
                     error_msg = f"Error en limpieza S3: {str(e)}"
                     self.logger.error(error_msg, exc_info=True)
@@ -1022,8 +993,6 @@ class DataExtractionOrchestrator:
             # 2. Limpiar watermarks en DynamoDB
             if self.watermark_storage and hasattr(self.watermark_storage, 'cleanup_table_watermarks'):
                 try:
-                    self.logger.info(f"🧹 Limpiando watermarks - table: {self.extraction_config.table_name}")
-                    
                     watermark_result = self.watermark_storage.cleanup_table_watermarks(
                         self.extraction_config.table_name
                     )
@@ -1036,10 +1005,10 @@ class DataExtractionOrchestrator:
                     if watermark_result.get('errors'):
                         consolidated_result['errors'].extend(watermark_result['errors'])
                     
-                    self.logger.info(
-                        f"✅ Watermark cleanup completado - "
-                        f"items eliminados: {watermark_result.get('items_deleted', 0)}"
-                    )
+                    # Solo loguear si hay items eliminados
+                    items_deleted = watermark_result.get('items_deleted', 0)
+                    if items_deleted > 0:
+                        self.logger.debug(f"Watermark cleanup: {items_deleted} items eliminados")
                 except Exception as e:
                     error_msg = f"Error en limpieza de watermarks: {str(e)}"
                     self.logger.error(error_msg, exc_info=True)
@@ -1055,8 +1024,6 @@ class DataExtractionOrchestrator:
             # 3. Limpiar logs en DynamoDB
             if self.monitor and hasattr(self.monitor, 'cleanup_table_logs'):
                 try:
-                    self.logger.info(f"🧹 Limpiando logs - table: {self.extraction_config.table_name}")
-                    
                     logs_result = self.monitor.cleanup_table_logs(self.extraction_config.table_name)
                     logs_result['service_name'] = 'DynamoDBMonitor'
                     consolidated_result['services_results'].append(logs_result)
@@ -1067,10 +1034,10 @@ class DataExtractionOrchestrator:
                     if logs_result.get('errors'):
                         consolidated_result['errors'].extend(logs_result['errors'])
                     
-                    self.logger.info(
-                        f"✅ Logs cleanup completado - "
-                        f"items eliminados: {logs_result.get('items_deleted', 0)}"
-                    )
+                    # Solo loguear si hay items eliminados
+                    items_deleted = logs_result.get('items_deleted', 0)
+                    if items_deleted > 0:
+                        self.logger.debug(f"Logs cleanup: {items_deleted} items eliminados")
                 except Exception as e:
                     error_msg = f"Error en limpieza de logs: {str(e)}"
                     self.logger.error(error_msg, exc_info=True)
@@ -1083,16 +1050,15 @@ class DataExtractionOrchestrator:
                         'errors': [error_msg]
                     })
             
-            # Log resumen final
+            # Log resumen final - solo si hay items eliminados o errores
+            total_deleted = consolidated_result['total_items_deleted']
             if consolidated_result['success']:
-                self.logger.info(
-                    f"✅ Proceso de limpieza RESET completado exitosamente - "
-                    f"Total items eliminados: {consolidated_result['total_items_deleted']}"
-                )
+                if total_deleted > 0:
+                    self.logger.info(f"✅ Limpieza RESET completada - {total_deleted} items eliminados")
             else:
                 self.logger.warning(
-                    f"⚠️ Proceso de limpieza RESET completado con errores - "
-                    f"Total items eliminados: {consolidated_result['total_items_deleted']}, "
+                    f"⚠️ Limpieza RESET con errores - "
+                    f"Items eliminados: {total_deleted}, "
                     f"Errores: {len(consolidated_result['errors'])}"
                 )
             
@@ -1119,10 +1085,16 @@ class DataExtractionOrchestrator:
      
     def _execute_partition_query(self, thread_id: int, query_metadata: Dict[str, Any]) -> tuple:
         """Ejecuta una query particionada individual con metadata completa"""
-        self.logger.info(f"🔍 DEBUG: Starting _execute_partition_query for thread {thread_id}")
-        
         query = query_metadata['query']
         metadata = query_metadata.get('metadata', {})
+        
+        partition_index = metadata.get('partition_index', 'N/A')
+        self.logger.info(
+            f"🔍 Thread {thread_id} - Ejecutando query particionada (Partition {partition_index})"
+        )
+        
+        # Mostrar query ANTES de ejecutarse para validación
+        self.logger.info(f"📝 SQL Query (Thread {thread_id}, Partition {partition_index}):\n{query}")
         
         files_created = []
         files_metadata = []
@@ -1134,7 +1106,6 @@ class DataExtractionOrchestrator:
             order_by = chunking_params.get('order_by')
             
             destination_path = metadata.get('destination_path', self._build_destination_path())
-            partition_index = metadata.get('partition_index')
             
             chunk_count = 0
             for chunk_df in self.extractor.extract_data(query, chunk_size, order_by):

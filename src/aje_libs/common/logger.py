@@ -8,9 +8,8 @@ import uuid
 try:
     from aws_lambda_powertools import Logger as PowertoolsLogger
     POWERTOOLS_AVAILABLE = True
-    print("SUCCESS: aws_lambda_powertools imported successfully in logger.py")
 except ImportError as import_err:
-    print(f"WARNING: aws_lambda_powertools import failed in logger.py: {import_err}")
+    # Solo mostrar warning si realmente hay un problema
     # Fallback for environments where aws_lambda_powertools is not available
     PowertoolsLogger = None
     POWERTOOLS_AVAILABLE = False
@@ -154,7 +153,7 @@ def custom_logger(
         return powertools_logger
     else:
         # Fallback to standard Python logger when powertools is not available
-        print(f"Using fallback standard logger for: {name or 'default'}")
+        # No mostrar mensaje, es un fallback silencioso
         fallback_logger = logging.getLogger(name or 'aje_libs_fallback')
         fallback_logger.setLevel(effective_log_level)
         

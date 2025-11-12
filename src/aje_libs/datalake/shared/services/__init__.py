@@ -1,7 +1,7 @@
 """Servicios compartidos del datalake."""
 
+from ..contracts.configuration import ICsvLoader
 from .configuration.csv_loader import (
-    ICsvLoader,
     LocalCsvLoader,
     S3CsvLoader,
     MultiSourceCsvLoader,

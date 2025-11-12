@@ -20,12 +20,9 @@ class StrategyFactory:
                watermark_storage: IWatermarkStorage = None) -> IExtractionStrategy:
         """Crea la estrategia apropiada basada en configuración"""
         
-        logger.info(f"=== STRATEGY FACTORY ===")
-        logger.info(f"Table: {extraction_config.table_name}")
-        
         # Determinar tipo de estrategia
         strategy_type = cls._determine_strategy_type(table_config, extraction_config)
-        logger.info(f"Determined strategy type: {strategy_type.value}")
+        logger.debug(f"Strategy Factory - Table: {extraction_config.table_name}, Type: {strategy_type.value}")
         
         # Verificar que esté registrada
         if not StrategyRegistry.is_registered(strategy_type):
@@ -36,9 +33,6 @@ class StrategyFactory:
         
         # Crear instancia de la nueva estrategia
         strategy_class = StrategyRegistry.get_strategy_class(strategy_type)
-        
-        logger.info(f"Creating strategy instance: {strategy_class.__name__}")
-        
         new_strategy = strategy_class(table_config, extraction_config, watermark_storage)
         
         # Validar configuración
@@ -51,9 +45,6 @@ class StrategyFactory:
         from ..strategies.adapters.strategy_adapter import StrategyAdapter
         strategy_adapter = StrategyAdapter(new_strategy)
         
-        logger.info(f"Strategy instance created and wrapped in adapter successfully")
-        logger.info("=== END STRATEGY FACTORY ===")
-        
         return strategy_adapter
     
     @classmethod
@@ -63,7 +54,7 @@ class StrategyFactory:
         
         # Usar load_type de configuración
         load_type = table_config.load_type.lower().strip() if table_config.load_type else 'full'
-        logger.info(f"Load type from config: '{load_type}'")
+        logger.debug(f"Load type desde config: '{load_type}'")
         
         # Lógica específica para determinar estrategia
         if load_type in ['incremental']:
@@ -74,10 +65,10 @@ class StrategyFactory:
             )
             
             if has_incremental_config:
-                logger.info("Detected incremental configuration - using INCREMENTAL strategy")
+                logger.debug("Configuración incremental detectada - usando estrategia INCREMENTAL")
                 return ExtractionStrategyType.INCREMENTAL
             else:
-                logger.warning("Incremental load_type but missing config - falling back to FULL_LOAD")
+                logger.warning("load_type incremental pero falta configuración - usando FULL_LOAD")
                 return ExtractionStrategyType.FULL_LOAD
         
         elif load_type in ['date_range', 'between-date', 'time_range']:
@@ -90,20 +81,20 @@ class StrategyFactory:
             )
             
             if has_time_range_config:
-                logger.info(f"Detected time range configuration for '{load_type}' - using TIME_RANGE strategy")
+                logger.debug(f"Configuración time_range detectada para '{load_type}' - usando estrategia TIME_RANGE")
                 return ExtractionStrategyType.TIME_RANGE
             else:
-                logger.warning(f"Time range load_type '{load_type}' but missing config - falling back to FULL_LOAD")
+                logger.warning(f"load_type '{load_type}' pero falta configuración - usando FULL_LOAD")
                 return ExtractionStrategyType.FULL_LOAD
         
         # Default a full load
         try:
             strategy_type = ExtractionStrategyType.from_string(load_type)
-            logger.info(f"Mapped to strategy type: {strategy_type.value}")
+            logger.debug(f"Estrategia mapeada: {strategy_type.value}")
             return strategy_type
         except ValueError as e:
-            logger.warning(f"Could not map load_type '{load_type}': {e}")
-            logger.info("Defaulting to FULL_LOAD strategy")
+            logger.warning(f"No se pudo mapear load_type '{load_type}': {e}")
+            logger.debug("Usando estrategia FULL_LOAD por defecto")
             return ExtractionStrategyType.FULL_LOAD
     
     @classmethod

@@ -50,8 +50,9 @@ class CsvExtractionConfigurationProvider(IConfigurationProvider):
             clean_row = {k.strip(): (v.strip() if isinstance(v, str) else v) for k, v in row.items() if k}
             rows.append(clean_row)
 
+        # Solo loguear en DEBUG - la información de carga de CSV no es crítica
         if self.logger:
-            self.logger.info(f"Cargadas {len(rows)} filas desde {path}")
+            self.logger.debug(f"Cargadas {len(rows)} filas desde {path}")
 
         self._cache[path] = rows
         return rows

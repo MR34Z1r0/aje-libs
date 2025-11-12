@@ -325,7 +325,9 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
             result['items_deleted'] = deleted_count
             result['details'] = f"Eliminados {deleted_count} watermarks"
             
-            self.logger.info(f"✅ Limpieza de watermarks completada - {deleted_count} eliminados")
+            # Solo loguear si hay items eliminados
+            if deleted_count > 0:
+                self.logger.info(f"✅ Limpieza de watermarks completada - {deleted_count} eliminados")
             
             return result
             

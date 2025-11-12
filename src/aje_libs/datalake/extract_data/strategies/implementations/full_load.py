@@ -15,14 +15,11 @@ class FullLoadStrategy(ExtractionStrategy):
         return ExtractionStrategyType.FULL_LOAD
     
     def build_extraction_params(self) -> ExtractionParams:
-        logger.info(f"=== FULL LOAD STRATEGY ===")
-        logger.info(f"Table: {self.extraction_config.table_name}")
-        logger.info(f"Load Mode: {self.extraction_config.load_mode.value}")
+        logger.debug(f"Full Load Strategy - Table: {self.extraction_config.table_name}, Mode: {self.extraction_config.load_mode.value}")
         
         # 🔄 RESET mode: El cleanup ya fue realizado por el orchestrator
         if self.extraction_config.load_mode == LoadMode.RESET:
-            logger.info("🔄 RESET mode - Cleanup already performed by orchestrator")
-            logger.info("🔄 RESET mode - behaves like INITIAL (full load); watermark only if table is incremental")
+            logger.debug("RESET mode - cleanup already performed")
 
         # 🆕 INITIAL mode: mensaje explícito para consistencia de logs
         if self.extraction_config.load_mode == LoadMode.INITIAL:
@@ -34,7 +31,7 @@ class FullLoadStrategy(ExtractionStrategy):
         if should_track_watermark:
             logger.info("✅ Full load will track watermark")
         else:
-            logger.info("ℹ️ Full load without watermark tracking")
+            logger.debug("Full load without watermark tracking")
         
         # Detectar si necesita particionado
         if self._should_use_partitioned_load_with_mode():  # 🔄 CAMBIO
@@ -42,7 +39,7 @@ class FullLoadStrategy(ExtractionStrategy):
             return self._build_partitioned_params(should_track_watermark)
         
         # Carga no particionada
-        logger.info("📋 Building non-partitioned full load params")
+        logger.debug("Building non-partitioned full load params")
         
         metadata = self._build_basic_metadata()
         
@@ -63,7 +60,7 @@ class FullLoadStrategy(ExtractionStrategy):
         for filter_condition in basic_filters:
             if filter_condition:
                 params.add_where_condition(filter_condition)
-                logger.info(f"➕ Added filter: {filter_condition}")
+                logger.debug(f"Added filter: {filter_condition}")
         
         logger.info(f"✅ Params built - Columns: {len(params.columns)}, Filters: {len(params.where_conditions)}")
         return params
@@ -129,12 +126,9 @@ class FullLoadStrategy(ExtractionStrategy):
             is_incremental_table
         )
         
-        logger.info(f"🔍 Watermark tracking decision:")
-        logger.info(f"   - Load Mode: {load_mode.value}")
-        logger.info(f"   - Has partition column: {has_partition_column}")
-        logger.info(f"   - Has watermark storage: {has_watermark_storage}")
-        logger.info(f"   - Is incremental table: {is_incremental_table}")
-        logger.info(f"   - Should track: {should_track}")
+        logger.debug(f"Watermark tracking - Mode: {load_mode.value}, "
+                    f"has_partition: {has_partition_column}, has_storage: {has_watermark_storage}, "
+                    f"is_incremental: {is_incremental_table}, should_track: {should_track}")
         
         return should_track
     
@@ -232,7 +226,7 @@ class FullLoadStrategy(ExtractionStrategy):
         for filter_condition in basic_filters:
             if filter_condition:  # Solo agregar si no está vacío
                 params.add_where_condition(filter_condition)
-                logger.info(f"➕ Added filter: {filter_condition}")
+                logger.debug(f"Added filter: {filter_condition}")
         
         logger.info(f"✅ Partitioned params built successfully")
         return params
@@ -249,8 +243,6 @@ class FullLoadStrategy(ExtractionStrategy):
 
     def validate(self) -> bool:
         """Valida configuración para carga completa"""
-        logger.info("=== FULL LOAD STRATEGY VALIDATION ===")
-        
         # Campos requeridos básicos
         required_fields = [
             ('stage_table_name', self.table_config.stage_table_name),
@@ -261,23 +253,19 @@ class FullLoadStrategy(ExtractionStrategy):
         
         validation_errors = []
         for field_name, field_value in required_fields:
-            logger.info(f"Checking {field_name}: '{field_value}'")
+            # Solo loguear en DEBUG o si hay error
+            logger.debug(f"Validating {field_name}")
             
             if field_value is None:
                 validation_errors.append(f"{field_name} is None")
             elif not str(field_value).strip():
                 validation_errors.append(f"{field_name} is empty")
-            else:
-                logger.info(f"  ✅ {field_name} is valid")
         
         if validation_errors:
-            logger.error("❌ VALIDATION FAILED:")
-            for error in validation_errors:
-                logger.error(f"  - {error}")
+            logger.error(f"❌ Validation failed: {', '.join(validation_errors)}")
             return False
         
-        logger.info("✅ ALL VALIDATION CHECKS PASSED")
-        logger.info("=== END VALIDATION ===")
+        # Validación exitosa - no loguear, es el caso normal
         return True
     
     def estimate_resources(self) -> dict:

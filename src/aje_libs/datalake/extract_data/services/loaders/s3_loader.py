@@ -157,13 +157,13 @@ class S3Loader(ILoader):
             if not table_path.endswith('/'):
                 table_path += '/'
             
-            logger.info(f"🧹 Limpiando datos S3 - bucket: {self.bucket_name}, path: {table_path}")
+            logger.debug(f"Limpiando S3 - bucket: {self.bucket_name}, path: {table_path}")
             
             # Listar todos los objetos con este prefijo
             objects = self.s3_helper.list_objects(prefix=table_path)
             
             if not objects:
-                logger.info(f"✅ No se encontraron objetos para limpiar en {table_path}")
+                logger.debug(f"No se encontraron objetos para limpiar en {table_path}")
                 result['success'] = True
                 result['details'] = f"No se encontraron objetos en {table_path}"
                 return result
@@ -172,11 +172,10 @@ class S3Loader(ILoader):
             keys_to_delete = [obj['Key'] for obj in objects]
             total_objects = len(keys_to_delete)
             
-            logger.info(f"📦 Encontrados {total_objects} objetos para eliminar")
-            
             # Eliminar objetos en lotes (S3 permite hasta 1000 por batch)
             batch_size = 1000
             deleted_count = 0
+            batch_errors = []
             
             for i in range(0, len(keys_to_delete), batch_size):
                 batch = keys_to_delete[i:i + batch_size]
@@ -186,13 +185,16 @@ class S3Loader(ILoader):
                     deleted_in_batch = len(delete_result.get('Deleted', []))
                     deleted_count += deleted_in_batch
                     
-                    logger.info(f"✅ Batch {i//batch_size + 1}: Eliminados {deleted_in_batch} objetos")
+                    # Solo loguear cada 10 batches o si hay error
+                    batch_num = i//batch_size + 1
+                    if batch_num % 10 == 0 or batch_num == 1:
+                        logger.debug(f"Batch {batch_num}: {deleted_in_batch} objetos eliminados")
                     
                     # Si hay errores en el batch
                     if 'Errors' in delete_result and delete_result['Errors']:
                         errors = [err.get('Message', 'Unknown error') for err in delete_result['Errors']]
                         result['errors'].extend(errors)
-                        logger.warning(f"⚠️ Errores en batch: {errors}")
+                        batch_errors.extend(errors)
                         
                 except Exception as e:
                     error_msg = f"Error eliminando batch {i//batch_size + 1}: {str(e)}"
@@ -201,9 +203,13 @@ class S3Loader(ILoader):
             
             result['success'] = deleted_count > 0 or total_objects == 0
             result['items_deleted'] = deleted_count
-            result['details'] = f"Eliminados {deleted_count} de {total_objects} objetos en {table_path}"
+            result['details'] = f"Eliminados {deleted_count} de {total_objects} objetos"
             
-            logger.info(f"✅ Limpieza S3 completada - Eliminados: {deleted_count}/{total_objects} objetos")
+            # Agrupar resultado final
+            if batch_errors:
+                logger.warning(f"⚠️ Limpieza S3 completada con errores - Eliminados: {deleted_count}/{total_objects}, Errores: {len(batch_errors)}")
+            elif deleted_count > 0:
+                logger.info(f"✅ Limpieza S3 completada - {deleted_count}/{total_objects} objetos eliminados")
             
             return result
             

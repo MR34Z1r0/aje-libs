@@ -31,7 +31,7 @@ class S3Helper:
         self.s3_resource = boto3.resource("s3", region_name=region_name)
         self.bucket = self.s3_resource.Bucket(bucket_name)
         self._validate_bucket()
-        logger.info(f"Configured helper for S3 bucket: {bucket_name}")
+        logger.debug(f"S3Helper configurado para bucket: {bucket_name}")
 
     def _validate_bucket(self) -> None:
         """Validate that the bucket exists and is accessible"""
@@ -219,7 +219,7 @@ class S3Helper:
         :return: S3 path of the uploaded object.
         """
         s3_path = f"s3://{self.bucket_name}/{object_key}"
-        logger.info(f"Putting object to S3: {s3_path}")
+        logger.debug(f"Subiendo objeto a S3: {s3_path}")
         
         try:
             put_args = {
@@ -232,7 +232,7 @@ class S3Helper:
                 put_args.update(extra_args)
             
             self.s3_client.put_object(**put_args)
-            logger.info(f"Object put successfully: {s3_path}")
+            logger.debug(f"Objeto subido exitosamente: {s3_path}")
             return s3_path
         except ClientError as error:
             logger.error(
@@ -271,7 +271,7 @@ class S3Helper:
         :param object_keys: List of key names in S3.
         :return: Response from delete_objects call.
         """
-        logger.info(f"Deleting {len(object_keys)} objects from S3")
+        logger.debug(f"Eliminando {len(object_keys)} objetos de S3")
         
         try:
             objects = [{'Key': key} for key in object_keys]
@@ -283,7 +283,7 @@ class S3Helper:
             deleted = response.get('Deleted', [])
             errors = response.get('Errors', [])
             
-            logger.info(f"Successfully deleted {len(deleted)} objects")
+            logger.debug(f"Eliminados {len(deleted)} objetos exitosamente")
             if errors:
                 logger.warning(f"Failed to delete {len(errors)} objects")
             
@@ -492,7 +492,7 @@ class S3Helper:
         :param max_pages: Maximum number of pages to retrieve (None for all).
         :return: List of object metadata.
         """
-        logger.info(f"Listing objects in bucket {self.bucket_name}")
+        logger.debug(f"Listando objetos en bucket {self.bucket_name}" + (f" (prefix: {prefix})" if prefix else ""))
         all_objects = []
         page_count = 0
         
@@ -516,14 +516,16 @@ class S3Helper:
                 objects = page.get('Contents', [])
                 all_objects.extend(objects)
                 
-                logger.debug(f"Page {page_count}: Retrieved {len(objects)} objects")
+                logger.debug(f"Página {page_count}: {len(objects)} objetos")
                 
                 # Check if we've reached max pages
                 if max_pages and page_count >= max_pages:
-                    logger.info(f"Reached maximum page limit of {max_pages}")
+                    logger.debug(f"Límite de páginas alcanzado: {max_pages}")
                     break
             
-            logger.info(f"Found {len(all_objects)} objects across {page_count} pages")
+            # Solo loguear resultado si hay objetos o si es importante
+            if len(all_objects) > 0:
+                logger.debug(f"Total: {len(all_objects)} objetos en {page_count} página(s)")
             return all_objects
         except ClientError as error:
             logger.error(

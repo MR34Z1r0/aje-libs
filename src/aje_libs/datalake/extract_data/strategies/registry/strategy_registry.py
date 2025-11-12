@@ -14,7 +14,7 @@ class StrategyRegistry:
     @classmethod
     def register(cls, strategy_type: ExtractionStrategyType, strategy_class: Type[ExtractionStrategy]):
         """Registra una nueva estrategia"""
-        logger.info(f"Registering strategy: {strategy_type.value} -> {strategy_class.__name__}")
+        # No loguear cada registro individual, se resumirá al final
         cls._strategies[strategy_type] = strategy_class
     
     @classmethod
@@ -44,13 +44,18 @@ def register_default_strategies():
         from ..implementations.incremental import IncrementalStrategy
         from ..implementations.time_range import TimeRangeStrategy
         
+        strategies_registered = []
         StrategyRegistry.register(ExtractionStrategyType.FULL_LOAD, FullLoadStrategy)
+        strategies_registered.append("full")
         StrategyRegistry.register(ExtractionStrategyType.INCREMENTAL, IncrementalStrategy)
+        strategies_registered.append("incremental")
         StrategyRegistry.register(ExtractionStrategyType.TIME_RANGE, TimeRangeStrategy)
+        strategies_registered.append("time_range")
         
-        logger.info("All default strategies registered successfully")
+        # Un solo mensaje resumido con todas las estrategias
+        logger.debug(f"Estrategias registradas: {', '.join(strategies_registered)}")
     except ImportError as e:
-        logger.warning(f"Could not register some default strategies: {e}")
+        logger.warning(f"No se pudieron registrar algunas estrategias por defecto: {e}")
 
 # Registrar automáticamente al importar
 register_default_strategies()

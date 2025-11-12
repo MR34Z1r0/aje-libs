@@ -26,7 +26,7 @@ class DynamoDBLogStorage(ILogStorage):
         try:
             self.dynamodb = boto3.resource('dynamodb', region_name=region)
             self.dynamodb_table = self.dynamodb.Table(table_name) if table_name else None
-            self.logger.info(f"DynamoDBLogStorage inicializado - Tabla: {table_name}")
+            self.logger.debug(f"DynamoDBLogStorage inicializado - Tabla: {table_name}")
         except Exception as e:
             self.logger.error(f"Error inicializando DynamoDBLogStorage: {e}")
             self.dynamodb_table = None
@@ -237,17 +237,6 @@ class DynamoDBLogStorage(ILogStorage):
                 f"endpoint_name: {endpoint_name or 'N/A'}, "
                 f"process_id_pattern (buscará): {process_id_pattern or 'N/A (solo TABLE_NAME)'}"
             )
-            # Mostrar qué filtro se usará
-            if process_id_pattern:
-                self.logger.info(
-                    f"📋 Buscando logs con PROCESS_ID = '{process_id_pattern}'"
-                )
-            else:
-                self.logger.info(
-                    f"📋 Buscando TODOS los logs con TABLE_NAME = '{table_name}' "
-                    f"(sin filtro por PROCESS_ID)"
-                )
-            
             # Escanear tabla buscando logs que coincidan
             deleted_count = 0
             items_to_delete = []
@@ -256,9 +245,7 @@ class DynamoDBLogStorage(ILogStorage):
                 # Construir filtro según lo que tengamos disponible
                 if process_id_pattern:
                     # Buscar SOLO por PROCESS_ID (corregido)
-                    self.logger.info(
-                        f"🔍 Buscando logs con PROCESS_ID = '{process_id_pattern}'"
-                    )
+                    self.logger.debug(f"Buscando logs con PROCESS_ID = '{process_id_pattern}'")
                     filter_expression = "#PROCESS_ID = :process_id"
                     expression_attribute_names = {
                         '#PROCESS_ID': 'PROCESS_ID'
@@ -268,10 +255,7 @@ class DynamoDBLogStorage(ILogStorage):
                     }
                 else:
                     # Si no tenemos PROCESS_ID, buscar solo por TABLE_NAME
-                    self.logger.info(
-                        f"🔍 Buscando TODOS los logs con TABLE_NAME = '{table_name}' "
-                        f"(sin PROCESS_ID específico)"
-                    )
+                    self.logger.debug(f"Buscando logs con TABLE_NAME = '{table_name}'")
                     filter_expression = "#TABLE_NAME = :table_name"
                     expression_attribute_names = {
                         '#TABLE_NAME': 'TABLE_NAME'
@@ -293,11 +277,7 @@ class DynamoDBLogStorage(ILogStorage):
                 )
                 
                 items_to_delete.extend(scan_response.get('Items', []))
-                page_count += 1
-                self.logger.info(
-                    f"📄 Página {page_count}: Encontrados {len(scan_response.get('Items', []))} items "
-                    f"(Total acumulado: {len(items_to_delete)})"
-                )
+                page_count = 1
                 
                 # Continuar paginando si hay más resultados
                 while 'LastEvaluatedKey' in scan_response:
@@ -310,10 +290,10 @@ class DynamoDBLogStorage(ILogStorage):
                     )
                     page_items = scan_response.get('Items', [])
                     items_to_delete.extend(page_items)
-                    self.logger.info(
-                        f"📄 Página {page_count}: Encontrados {len(page_items)} items "
-                        f"(Total acumulado: {len(items_to_delete)})"
-                    )
+                
+                # Resumir búsqueda
+                if page_count > 1:
+                    self.logger.debug(f"Búsqueda completada: {len(items_to_delete)} items en {page_count} páginas")
                 
                 if not items_to_delete:
                     self.logger.info(f"✅ No se encontraron logs para limpiar")
@@ -323,32 +303,18 @@ class DynamoDBLogStorage(ILogStorage):
                 
                 self.logger.info(f"📦 Encontrados {len(items_to_delete)} logs para eliminar")
                 
-                # Eliminar cada item
+                # Eliminar cada item (resumir progreso cada 10 items)
                 for idx, item in enumerate(items_to_delete, 1):
                     try:
-                        # Log detallado del item antes de procesar
-                        self.logger.info(
-                            f"🔍 Procesando item {idx}/{len(items_to_delete)} - "
-                            f"PROCESS_ID tipo: {type(item.get('PROCESS_ID'))}, "
-                            f"DATE_SYSTEM tipo: {type(item.get('DATE_SYSTEM'))}"
-                        )
-                        
                         # Extraer keys y convertir tipos correctamente (DynamoDB puede devolver Decimal, etc.)
                         process_id_raw = item.get('PROCESS_ID')
                         date_system_raw = item.get('DATE_SYSTEM')
                         
-                        # Log valores raw
-                        self.logger.info(
-                            f"🔍 Valores raw - PROCESS_ID: {repr(process_id_raw)}, DATE_SYSTEM: {repr(date_system_raw)}"
-                        )
-                        
                         # Convertir tipos correctamente para DynamoDB
-                        # DynamoDB puede devolver Decimal, pero necesitamos el tipo original
                         process_id = None
                         date_system = None
                         
                         if process_id_raw is not None:
-                            # Si es Decimal, convertir a string, si es string dejarlo
                             if isinstance(process_id_raw, Decimal):
                                 process_id = str(process_id_raw)
                             elif isinstance(process_id_raw, str):
@@ -357,17 +323,12 @@ class DynamoDBLogStorage(ILogStorage):
                                 process_id = str(process_id_raw)
                         
                         if date_system_raw is not None:
-                            # Si es Decimal, convertir a string, si es string dejarlo
                             if isinstance(date_system_raw, Decimal):
                                 date_system = str(date_system_raw)
                             elif isinstance(date_system_raw, str):
                                 date_system = date_system_raw
                             else:
                                 date_system = str(date_system_raw)
-                        
-                        self.logger.info(
-                            f"🔍 Valores convertidos - PROCESS_ID: {repr(process_id)}, DATE_SYSTEM: {repr(date_system)}"
-                        )
                         
                         # Verificar que tenemos las keys necesarias
                         if not process_id or not date_system:
@@ -383,37 +344,20 @@ class DynamoDBLogStorage(ILogStorage):
                             'DATE_SYSTEM': date_system
                         }
                         
-                        # Intentar eliminar
-                        self.logger.info(
-                            f"🗑️ Intentando eliminar log - PROCESS_ID: {repr(process_id)}, DATE_SYSTEM: {repr(date_system)}"
-                        )
-                        self.logger.info(
-                            f"🗑️ Key a usar: {key_to_delete}"
-                        )
-                        
                         try:
                             response = self.dynamodb_table.delete_item(
                                 Key=key_to_delete,
-                                ReturnValues='ALL_OLD'  # Para verificar que existía
+                                ReturnValues='ALL_OLD'
                             )
                             
-                            self.logger.info(
-                                f"🔍 Respuesta de delete_item: {response}"
-                            )
-                            
-                            # Verificar que se eliminó (si hay Attributes, significa que existía)
+                            # Verificar que se eliminó
                             if response.get('Attributes'):
                                 deleted_count += 1
-                                self.logger.info(
-                                    f"✅ Log eliminado exitosamente - PROCESS_ID: {process_id}, DATE_SYSTEM: {date_system}"
-                                )
+                                # Solo loguear progreso cada 10 items o al final
+                                if idx % 10 == 0 or idx == len(items_to_delete):
+                                    self.logger.debug(f"Eliminados {deleted_count}/{idx} logs")
                             else:
-                                # No había item con esas keys (puede haber sido eliminado antes o no existe)
-                                self.logger.warning(
-                                    f"⚠️ Log no encontrado al intentar eliminar - "
-                                    f"PROCESS_ID: {process_id}, DATE_SYSTEM: {date_system}. "
-                                    f"Respuesta: {response}"
-                                )
+                                self.logger.debug(f"Log no encontrado: {process_id}")
                         except Exception as delete_error:
                             self.logger.error(
                                 f"❌ Error en delete_item - "

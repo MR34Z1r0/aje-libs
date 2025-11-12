@@ -20,7 +20,7 @@ class SecretsHelper:
         """
         self.secret_name = secret_name
         self.client_sm = boto3.client("secretsmanager")
-        logger.info(f"Inicializando SecretsHelper para el secreto: {secret_name}")
+        logger.debug(f"SecretsHelper inicializado para: {secret_name}")
 
     def get_secret_value(self, key_name: Optional[str] = None) -> Union[str, None]:
         """
@@ -28,22 +28,19 @@ class SecretsHelper:
         :param key_name Optional(str): Nombre de la clave a recuperar del secreto JSON.
         """
         try:
-            logger.info(f"Intentando obtener el secreto: {self.secret_name}")
-            
             # Obtener el valor del secreto
             secret_value = self.client_sm.get_secret_value(SecretId=self.secret_name)
-            logger.info(f"Secreto obtenido con éxito: {self.secret_name}")
             
             # Parsear el valor del secreto
             self.json_secret = json.loads(secret_value["SecretString"])
-            logger.debug("Valor SecretString parseado correctamente")
+            logger.debug("SecretString parseado correctamente")
             
             # Devolver el valor específico o todo el secreto
             if key_name:
-                logger.info(f"Retornando valor para la clave específica: {key_name}")
+                logger.debug(f"Retornando clave '{key_name}' del secreto '{self.secret_name}'")
                 return self.json_secret[key_name]
             else:
-                logger.info("Retornando todo el contenido del secreto")
+                logger.debug(f"Retornando todo el contenido del secreto '{self.secret_name}'")
                 return self.json_secret
                 
         except ClientError as e:
