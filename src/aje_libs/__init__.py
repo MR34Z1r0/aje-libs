@@ -1,5 +1,9 @@
-from .bd import *
-from .common import *
-from .documents import *
+"""
+aje_libs - Biblioteca principal
 
-__version__ = "0.1.0"
+Contiene módulos para datalake, bd, common, documents
+"""
+# Exportar módulos principales
+from . import datalake
+
+__all__ = ['datalake']
