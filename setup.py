@@ -14,10 +14,7 @@ setup(
     url="https://github.com/MR34Z1r0/aje-libs",
     package_dir={"": "src"},
     packages=find_packages(where="src", include=["aje_libs*"]),
-    install_requires=[
-        # Lista tus dependencias aquí, por ejemplo:
-        "aws-lambda-powertools>=3.11.0",
-    ],
+    install_requires=[],
     python_requires=">=3.9",
     classifiers=[
         "Programming Language :: Python :: 3",

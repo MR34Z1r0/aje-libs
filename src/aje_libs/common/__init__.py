@@ -13,7 +13,7 @@ from .helpers import (
     DeepSeekModel,
     MetaModel,
     NovaModel,
-    BedrockHelper,
+    # BedrockHelper se importa de forma lazy - solo cuando se use explícitamente
     DynamoDBHelper,
     S3Helper,
     SecretsHelper,
@@ -34,7 +34,7 @@ __all__ = [
     'DeepSeekModel',
     'MetaModel',
     'NovaModel',
-    'BedrockHelper',
+    'BedrockHelper',  # Mantener en __all__ para compatibilidad, pero importación lazy
     'DynamoDBHelper',
     'S3Helper',
     'SecretsHelper',
@@ -43,3 +43,11 @@ __all__ = [
     'set_logger_config',
     'DecimalEncoder',
 ]
+
+# Importación lazy de BedrockHelper - solo se importa cuando se accede explícitamente
+def __getattr__(name: str):
+    """Importación lazy para BedrockHelper"""
+    if name == 'BedrockHelper':
+        from .helpers import BedrockHelper
+        return BedrockHelper
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
