@@ -45,6 +45,7 @@ def test_incremental_requires_id_column():
 
 @pytest.mark.unit
 def test_partition_mode_requires_partition_column():
+    """Test que valida que partition_mode requiere partition_column cuando tiene un valor válido"""
     with pytest.raises(ValueError):
         TableConfig(stage_table_name="stg_table", partition_mode="daily", partition_column=None)
 
@@ -55,5 +56,88 @@ def test_partition_mode_requires_partition_column():
         partition_column="created_at",
     )
     assert cfg.partition_column == "created_at"
+
+
+@pytest.mark.unit
+def test_partition_mode_none_is_normalized():
+    """Test que valida normalización de partition_mode='NONE' a None"""
+    # 'NONE' se normaliza a None
+    cfg = TableConfig(
+        stage_table_name="stg_table",
+        partition_mode="NONE"
+    )
+    assert cfg.partition_mode is None
+    
+    # 'none' (minúsculas) también se normaliza
+    cfg = TableConfig(
+        stage_table_name="stg_table",
+        partition_mode="none"
+    )
+    assert cfg.partition_mode is None
+    
+    # String vacío se normaliza a None
+    cfg = TableConfig(
+        stage_table_name="stg_table",
+        partition_mode=""
+    )
+    assert cfg.partition_mode is None
+
+
+@pytest.mark.unit
+def test_partition_mode_valid_values_are_normalized_to_uppercase():
+    """Test que valida que valores válidos se normalizan a mayúsculas"""
+    # 'AUTO' se mantiene en mayúsculas
+    cfg = TableConfig(
+        stage_table_name="stg_table",
+        partition_mode="AUTO",
+        partition_column="created_at"
+    )
+    assert cfg.partition_mode == "AUTO"
+    
+    # 'auto' se normaliza a 'AUTO'
+    cfg = TableConfig(
+        stage_table_name="stg_table",
+        partition_mode="auto",
+        partition_column="created_at"
+    )
+    assert cfg.partition_mode == "AUTO"
+    
+    # 'MIN_MAX' se mantiene en mayúsculas
+    cfg = TableConfig(
+        stage_table_name="stg_table",
+        partition_mode="MIN_MAX",
+        partition_column="created_at"
+    )
+    assert cfg.partition_mode == "MIN_MAX"
+    
+    # 'min_max' se normaliza a 'MIN_MAX'
+    cfg = TableConfig(
+        stage_table_name="stg_table",
+        partition_mode="min_max",
+        partition_column="created_at"
+    )
+    assert cfg.partition_mode == "MIN_MAX"
+
+
+@pytest.mark.unit
+def test_partition_mode_none_does_not_require_partition_column():
+    """Test que valida que partition_mode=None no requiere partition_column"""
+    # Cuando partition_mode es None, no se requiere partition_column
+    cfg = TableConfig(
+        stage_table_name="stg_table",
+        partition_mode=None,
+        partition_column=None
+    )
+    assert cfg.partition_mode is None
+    assert cfg.partition_column is None
+    
+    # También funciona cuando partition_mode se normaliza a None
+    cfg = TableConfig(
+        stage_table_name="stg_table",
+        partition_mode="NONE",
+        partition_column=None
+    )
+    assert cfg.partition_mode is None
+    assert cfg.partition_column is None
 
 

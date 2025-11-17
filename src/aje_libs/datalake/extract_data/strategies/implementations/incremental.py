@@ -1,7 +1,7 @@
 # strategies/implementations/incremental.py
 from typing import List
 from ..base.extraction_strategy import ExtractionStrategy
-from ..base.extraction_params import ExtractionParams
+from ....shared.models import ExtractionParams  # ✅ ExtractionParams movido a shared/models
 from ..base.strategy_types import ExtractionStrategyType
 from ....shared.services.logging import LoggerService
 from aje_libs.datalake.shared.models import LoadMode
@@ -42,8 +42,12 @@ class IncrementalStrategy(ExtractionStrategy):
         """
         logger.info("🏗️ Building INITIAL load params (full + watermark tracking)")
         
+        # Construir table_name con JOIN (preservando alias si existe)
+        table_name_with_joins = self._build_table_name_with_joins()
+        logger.debug(f"📎 Table with JOIN: {table_name_with_joins}")
+        
         params = ExtractionParams(
-            table_name=self._get_source_table_name(),
+            table_name=table_name_with_joins,
             columns=self._parse_columns(),
             metadata=self._build_basic_metadata()
         )
@@ -80,8 +84,12 @@ class IncrementalStrategy(ExtractionStrategy):
         """
         logger.info("📊 Building INCREMENTAL params (with watermark filters)")
         
+        # Construir table_name con JOIN (preservando alias si existe)
+        table_name_with_joins = self._build_table_name_with_joins()
+        logger.debug(f"📎 Table with JOIN: {table_name_with_joins}")
+        
         params = ExtractionParams(
-            table_name=self._get_source_table_name(),
+            table_name=table_name_with_joins,
             columns=self._parse_columns(),
             metadata=self._build_basic_metadata()
         )

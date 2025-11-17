@@ -1,9 +1,8 @@
 # strategies/base/extraction_strategy.py
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
-from .extraction_params import ExtractionParams
 from .strategy_types import ExtractionStrategyType
-from ....shared.models import TableConfig
+from ....shared.models import TableConfig, ExtractionParams  # ✅ ExtractionParams movido a shared/models
 from ...models.extraction_config import ExtractionConfig
 from ....shared.contracts.watermark import IWatermarkStorage
 
@@ -145,22 +144,83 @@ class ExtractionStrategy(ABC):
         source_table = self.table_config.source_table or ""
         source_schema = self.table_config.source_schema or ""
         
-        # Construir table name preservando alias si existe
+        # Detectar alias necesario basándose en las columnas
+        required_alias = self._detect_required_table_alias()
+        
+        # Verificar si source_table ya tiene un alias
+        source_table_has_alias = ' ' in source_table.strip()
+        existing_alias = None
+        if source_table_has_alias:
+            parts = source_table.strip().split(None, 1)
+            if len(parts) > 1:
+                existing_alias = parts[1].strip()
+        
+        # Construir table name preservando alias si existe, o agregando el detectado
         if '.' in source_table and not source_schema:
-            # Ya tiene schema, usar tal cual
+            # Ya tiene schema, usar tal cual (puede incluir alias)
             table_name_with_joins = source_table.strip()
         elif source_schema:
             # Construir con schema
-            table_name_with_joins = f"{source_schema}.{source_table}".strip()
+            if source_table_has_alias:
+                # Si source_table ya tiene alias, preservarlo
+                table_name_only = source_table.strip().split(None, 1)[0]
+                table_name_with_joins = f"{source_schema}.{table_name_only} {existing_alias}".strip()
+            else:
+                table_name_with_joins = f"{source_schema}.{source_table}".strip()
         else:
             # Sin schema, usar solo la tabla
             table_name_with_joins = source_table.strip()
+        
+        # Si las columnas requieren un alias pero la tabla no lo tiene, agregarlo
+        if required_alias and not source_table_has_alias and ' ' not in table_name_with_joins:
+            # Extraer solo el nombre de tabla sin schema para agregar alias
+            table_name_only = table_name_with_joins
+            if '.' in table_name_with_joins:
+                table_name_only = table_name_with_joins.split('.')[-1]
+                schema_part = table_name_with_joins.rsplit('.', 1)[0]
+                table_name_with_joins = f"{schema_part}.{table_name_only} {required_alias}"
+            else:
+                table_name_with_joins = f"{table_name_with_joins} {required_alias}"
         
         # Agregar JOINs si existen
         if hasattr(self.table_config, 'join_expr') and self.table_config.join_expr and self.table_config.join_expr.strip():
             table_name_with_joins += f" {self.table_config.join_expr.strip()}"
         
         return table_name_with_joins
+    
+    def _detect_required_table_alias(self) -> str:
+        """Detecta el alias de tabla necesario basándose en las columnas"""
+        import re
+        
+        # Obtener todas las columnas como string
+        columns_str = ""
+        if isinstance(self.table_config.columns, list):
+            columns_str = ' '.join(self.table_config.columns)
+        elif isinstance(self.table_config.columns, str):
+            columns_str = self.table_config.columns
+        
+        # También incluir ID_COLUMN si existe
+        if hasattr(self.table_config, 'id_column') and self.table_config.id_column:
+            columns_str += f" {self.table_config.id_column}"
+        
+        # Buscar patrones de alias como "m.columna" o "t.columna"
+        # El alias más común será el principal
+        alias_pattern = r'\b([a-z])\.([a-zA-Z_][a-zA-Z0-9_]*)'
+        matches = re.findall(alias_pattern, columns_str, re.IGNORECASE)
+        
+        if matches:
+            # Contar frecuencia de cada alias
+            alias_counts = {}
+            for alias, _ in matches:
+                alias = alias.lower()
+                alias_counts[alias] = alias_counts.get(alias, 0) + 1
+            
+            # Retornar el alias más común (probablemente 'm' para la tabla principal)
+            if alias_counts:
+                most_common_alias = max(alias_counts.items(), key=lambda x: x[1])[0]
+                return most_common_alias
+        
+        return None
     
     def _build_basic_metadata(self) -> Dict[str, Any]:
         """Construye metadatos básicos para la extracción"""

@@ -11,6 +11,7 @@ from .models import (
 from ..shared.models import (
     DatabaseConfig,  # ✅ Movido a shared/models
     FileMetadata,  # ✅ Movido a shared/models
+    ExtractionParams,  # ✅ Movido a shared/models para evitar dependencias circulares
     TableConfig,
     LoadMode,
     ColumnMetadata,
@@ -25,7 +26,6 @@ from .factories import (
 )
 from .strategies import (
     ExtractionStrategy,
-    ExtractionParams,
     ExtractionStrategyType,
     FullLoadStrategy,
     IncrementalStrategy,

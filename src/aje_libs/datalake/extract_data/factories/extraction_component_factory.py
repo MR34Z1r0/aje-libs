@@ -123,14 +123,24 @@ class DefaultComponentFactory:  # Implementa IComponentFactory (heredado no pued
         self, 
         config: ExtractionConfig, 
         table_config: TableConfig,
-        watermark_storage: Optional[IWatermarkStorage] = None
+        watermark_storage: Optional[IWatermarkStorage] = None,
+        db_type: Optional[str] = None
     ) -> IExtractionStrategy:
-        """Crea una estrategia de extracción según la configuración"""
+        """
+        Crea una estrategia de extracción según la configuración.
+        
+        Args:
+            config: Configuración de extracción
+            table_config: Configuración de tabla
+            watermark_storage: Storage para watermarks (opcional)
+            db_type: Tipo de base de datos para QueryBuilder (opcional)
+        """
         self.logger.debug(f"Creando estrategia para tabla: {table_config.source_table}")
         return StrategyFactory.create(
             table_config=table_config,
             extraction_config=config,
-            watermark_storage=watermark_storage
+            watermark_storage=watermark_storage,
+            db_type=db_type
         )
     
     def create_configuration_provider(self, config: ExtractionConfig) -> IConfigurationProvider:

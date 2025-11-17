@@ -11,6 +11,7 @@ from .column_metadata import ColumnMetadata
 from .resource_ref import ResourceRef
 from .database_config import DatabaseConfig  # ✅ Movido desde extract_data/models
 from .file_metadata import FileMetadata  # ✅ Movido desde extract_data/models
+from .extraction_params import ExtractionParams  # ✅ Movido desde strategies/base para evitar dependencias circulares
 
 __all__ = [
     'WatermarkStatus',
@@ -23,5 +24,6 @@ __all__ = [
     'ResourceRef',
     'DatabaseConfig',  # ✅ Movido desde extract_data/models
     'FileMetadata',  # ✅ Movido desde extract_data/models
+    'ExtractionParams',  # ✅ Modelo compartido para evitar dependencias circulares
 ]
 

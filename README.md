@@ -238,9 +238,285 @@ dynamodb_client = session_manager.get_client("dynamodb")
 
 El módulo `datalake` proporciona orquestadores y servicios para la extracción y transformación de datos.
 
+#### 🏗️ Arquitectura del Módulo Datalake
+
+El módulo `datalake.extract_data` está diseñado con una arquitectura desacoplada que separa las responsabilidades en tres capas principales:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ESTRATEGIA                                │
+│              (FullLoadStrategy)                              │
+│                                                              │
+│  Responsabilidad:                                            │
+│  • Decide QUÉ extraer (columnas, filtros)                    │
+│  • Decide CÓMO extraer (full, incremental, particionado)   │
+│  • Construye ExtractionParams (parámetros estructurados)    │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       │ 1. build_extraction_params()
+                       │    Retorna: ExtractionParams
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│              EXTRACTION PARAMS                              │
+│         (shared/models/extraction_params.py)               │
+│                                                              │
+│  ✅ Ubicado en shared/models para evitar                    │
+│     dependencias circulares (SOLID - DIP)                    │
+│                                                              │
+│  {                                                           │
+│    table_name: "dbo.mcompa1f m",                            │
+│    columns: ["m.compania", "m.nombre", ...],               │
+│    where_conditions: ["m.compania > '001'"],                │
+│    chunk_size: 1000000,                                     │
+│    metadata: {...}                                          │
+│  }                                                           │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       │ 2. build_select_query(params)
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  QUERY BUILDER                               │
+│            (SQLServerQueryBuilder)                           │
+│                                                              │
+│  Responsabilidad:                                            │
+│  • Convierte ExtractionParams → SQL string                  │
+│  • Aplica sintaxis específica del motor                     │
+│  • Formatea valores (fechas, identificadores)               │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       │ 3. Retorna: "SELECT TOP 1000 ..."
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    EXTRACTOR                                 │
+│              (SQLServerExtractor)                            │
+│                                                              │
+│  Responsabilidad:                                            │
+│  • Ejecuta el SQL string                                    │
+│  • Obtiene datos de la base de datos                        │
+│  • Retorna DataFrame con resultados                         │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       │ 4. Retorna: DataFrame
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     LOADER                                   │
+│                      (S3Loader)                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+##### Componentes Principales
+
+###### 1. **Strategies (Estrategias)** - Lógica de Negocio
+
+Las estrategias definen **QUÉ** y **CÓMO** extraer datos, sin conocer detalles de la base de datos específica.
+
+**Propósito:**
+- Decidir qué datos extraer (columnas, tablas, filtros)
+- Determinar cuándo extraer (full load, incremental, time range)
+- Aplicar lógica de negocio (watermarks, particionado, chunking)
+- Construir `ExtractionParams` estructurados
+
+**Estrategias Disponibles:**
+- `FullLoadStrategy`: Extrae toda la tabla (carga inicial, reset)
+- `IncrementalStrategy`: Extrae solo datos nuevos usando watermarks
+- `TimeRangeStrategy`: Extrae por rango de fechas específico
+
+**Manejo Robusto de Configuración:**
+- Las estrategias manejan correctamente `partition_mode=None` (normalizado desde 'NONE')
+- Si `partition_mode` es `None`, usan 'AUTO' como valor por defecto
+- Evitan errores de `AttributeError` cuando `partition_mode` es `None`
+
+**Ejemplo:**
+```python
+from aje_libs.datalake.extract_data.strategies.implementations.full_load import FullLoadStrategy
+
+strategy = FullLoadStrategy(table_config, extraction_config)
+params = strategy.build_extraction_params()
+# params contiene: table_name, columns, where_conditions, metadata, etc.
+```
+
+###### 2. **Query Builders** - Generación de SQL
+
+Los Query Builders construyen el texto SQL específico para cada motor de base de datos.
+
+**Propósito:**
+- Convertir `ExtractionParams` → SQL string
+- Aplicar sintaxis específica del motor (SQL Server, PostgreSQL, etc.)
+- Formatear valores (fechas, identificadores, tipos de datos)
+- Manejar particularidades (TOP vs LIMIT, DATETIME2 vs TIMESTAMP)
+
+**Query Builders Disponibles:**
+- `SQLServerQueryBuilder`: Para SQL Server
+  - Usa `DATETIME2(6)` para fechas
+  - Usa `TOP` o `OFFSET/FETCH` para paginación
+  - Usa brackets `[identifier]` para identificadores
+  
+- `PostgreSQLQueryBuilder`: Para PostgreSQL
+  - Usa `TIMESTAMP(6)` para fechas
+  - Usa `LIMIT/OFFSET` para paginación
+  - Usa comillas dobles `"identifier"` para identificadores
+
+**Ejemplo:**
+```python
+from aje_libs.datalake.extract_data.factories.query_builder_factory import QueryBuilderFactory
+
+# Crear QueryBuilder para SQL Server
+query_builder = QueryBuilderFactory.create(
+    db_type="sqlserver",
+    table_config=table_config
+)
+
+# Construir query SQL
+sql_query = query_builder.build_select_query(params)
+# Resultado: "SELECT TOP 1000 m.compania FROM dbo.mcompa1f m WHERE ..."
+```
+
+**Ventajas:**
+- ✅ Estrategias agnósticas a la base de datos
+- ✅ Fácil agregar soporte para nuevos motores (MySQL, Oracle, etc.)
+- ✅ Sintaxis SQL correcta para cada motor
+
+###### 3. **Extractors** - Ejecución de SQL
+
+Los Extractors ejecutan queries SQL y obtienen datos de la base de datos.
+
+**Propósito:**
+- Conectarse a la base de datos
+- Ejecutar queries SQL
+- Obtener resultados como DataFrames de pandas
+- Manejar conexiones, pools, reintentos, chunking
+
+**Extractors Disponibles:**
+- `SQLServerExtractor`: Para SQL Server usando SQLAlchemy/pymssql
+
+**Ejemplo:**
+```python
+from aje_libs.datalake.extract_data.services.extractors.sql_server_extractor import SQLServerExtractor
+
+extractor = SQLServerExtractor(database_config)
+extractor.connect()
+df = extractor.execute_query(sql_query)
+# df es un DataFrame de pandas con los datos
+```
+
+##### Comparación de Responsabilidades
+
+| Componente | Responsabilidad | Conoce DB | Input | Output |
+|------------|----------------|-----------|-------|--------|
+| **Strategy** | Qué y cómo extraer (lógica de negocio) | ❌ No (agnóstico) | TableConfig, ExtractionConfig | ExtractionParams |
+| **QueryBuilder** | Cómo construir SQL (sintaxis) | ✅ Sí (específico) | ExtractionParams | SQL string |
+| **Extractor** | Cómo ejecutar SQL (conexión) | ✅ Sí (específico) | SQL string | DataFrame |
+
+##### Flujo Completo de Ejecución
+
+```python
+# 1. ESTRATEGIA decide QUÉ y CÓMO
+strategy = FullLoadStrategy(table_config, extraction_config)
+params = strategy.build_extraction_params()
+
+# 2. QUERY BUILDER convierte params → SQL
+query_builder = QueryBuilderFactory.create("sqlserver", table_config)
+sql_query = query_builder.build_select_query(params)
+
+# 3. EXTRACTOR ejecuta SQL y obtiene datos
+extractor = SQLServerExtractor(database_config)
+extractor.connect()
+df = extractor.execute_query(sql_query)
+
+# 4. LOADER guarda datos
+loader = S3Loader(config)
+loader.save(df, destination_path)
+```
+
+##### 🏛️ Arquitectura y Principios SOLID
+
+El módulo `extract_data` sigue principios SOLID para garantizar mantenibilidad y extensibilidad:
+
+**Dependency Inversion Principle (DIP):**
+- Las interfaces (`contracts/`) dependen de modelos compartidos (`shared/models/`)
+- No dependen de implementaciones específicas (`strategies/`)
+- `ExtractionParams` está en `shared/models/` para evitar dependencias circulares
+
+**Single Responsibility Principle (SRP):**
+- `ExtractionParams`: DTO puro para parámetros de extracción
+- `TableConfig`: Modelo de configuración con validación y normalización
+- Cada componente tiene una responsabilidad única y bien definida
+
+**Normalización Automática:**
+- `TableConfig` normaliza automáticamente valores como `partition_mode='NONE'` → `None`
+- Maneja strings vacíos, variaciones de mayúsculas/minúsculas
+- Las estrategias manejan correctamente valores `None` con defaults apropiados
+
+**Ejemplo de Normalización:**
+```python
+from aje_libs.datalake.shared.models import TableConfig
+
+# El CSV puede tener 'NONE', 'none', '', etc.
+# TableConfig lo normaliza automáticamente
+config = TableConfig(
+    stage_table_name="mi_tabla",
+    partition_mode="NONE"  # Se normaliza a None
+)
+assert config.partition_mode is None  # ✅ Normalizado
+
+# Las estrategias manejan None correctamente
+# Si partition_mode es None, usan 'AUTO' como default
+```
+
+##### Extensibilidad: Agregar Soporte para Nuevos Motores de Base de Datos
+
+Para agregar soporte a un nuevo motor de base de datos (ej: MySQL, Oracle), solo necesitas:
+
+1. **Crear el QueryBuilder** implementando `IQueryBuilder`:
+```python
+from aje_libs.datalake.extract_data.contracts.query_builder_interface import IQueryBuilder
+from aje_libs.datalake.shared.models import ExtractionParams  # ✅ Modelo compartido
+
+class MySQLQueryBuilder(IQueryBuilder):
+    """QueryBuilder para MySQL"""
+    
+    def build_select_query(self, params: ExtractionParams) -> str:
+        # Implementar construcción de SELECT para MySQL
+        # MySQL usa LIMIT/OFFSET similar a PostgreSQL
+        query = f"SELECT {', '.join(params.columns)} FROM {params.table_name}"
+        if params.get_where_clause():
+            query += f" WHERE {params.get_where_clause()}"
+        if params.limit:
+            query += f" LIMIT {params.limit}"
+        return query
+    
+    def format_datetime_value(self, value: str, precision: int = 6) -> str:
+        # MySQL usa DATETIME o TIMESTAMP
+        return f"CAST('{value}' AS DATETIME)"
+    
+    # ... implementar otros métodos requeridos
+```
+
+2. **Registrarlo en el Factory**:
+```python
+from aje_libs.datalake.extract_data.factories.query_builder_factory import QueryBuilderFactory
+
+QueryBuilderFactory.register_builder('mysql', MySQLQueryBuilder)
+```
+
+3. **¡Listo!** Las estrategias existentes funcionarán automáticamente con el nuevo motor:
+```python
+# El orquestador detectará automáticamente el tipo de DB y usará el QueryBuilder apropiado
+orchestrator = DataExtractionOrchestrator(extraction_config)
+result = orchestrator.execute()  # Funciona con MySQL sin cambios en las estrategias
+```
+
+**Ventajas de esta arquitectura:**
+- ✅ No necesitas modificar las estrategias (full_load, incremental, time_range)
+- ✅ No necesitas modificar el orquestador
+- ✅ Solo creas el QueryBuilder específico para tu motor
+- ✅ El código existente sigue funcionando sin cambios
+
 #### DataExtractionOrchestrator
 
 Orquestador principal para la extracción de datos desde bases de datos hacia almacenamiento en la nube.
+
+El orquestador coordina todos los componentes (Strategies, QueryBuilders, Extractors, Loaders) de forma automática.
 
 ```python
 from aje_libs.datalake.extract_data import DataExtractionOrchestrator

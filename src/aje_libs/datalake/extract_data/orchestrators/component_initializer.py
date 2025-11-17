@@ -251,10 +251,18 @@ class ComponentInitializer:
     def _initialize_strategy(self):
         """Inicializa la estrategia"""
         self.logger.info("🎯 Creando estrategia de extracción...")
+        
+        # 🆕 Obtener db_type del database_config si está disponible
+        db_type = None
+        if self.database_config and hasattr(self.database_config, 'db_type'):
+            db_type = self.database_config.db_type
+            self.logger.debug(f"📊 Usando db_type: {db_type} para QueryBuilder")
+        
         self.strategy = self.component_factory.create_strategy(
             config=self.config,
             table_config=self.table_config,
-            watermark_storage=self.watermark_storage
+            watermark_storage=self.watermark_storage,
+            db_type=db_type
         )
         self.logger.info(f"✅ Estrategia creada: {self.strategy.get_strategy_name()}")
     

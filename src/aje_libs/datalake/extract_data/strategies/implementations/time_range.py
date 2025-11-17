@@ -2,7 +2,7 @@
 
 from typing import List
 from ..base.extraction_strategy import ExtractionStrategy
-from ..base.extraction_params import ExtractionParams
+from ....shared.models import ExtractionParams  # ✅ ExtractionParams movido a shared/models
 from ..base.strategy_types import ExtractionStrategyType
 from ....shared.services.logging import LoggerService
 from aje_libs.datalake.shared.models import LoadMode
@@ -45,8 +45,15 @@ class TimeRangeStrategy(ExtractionStrategy):
         """
         logger.info("🔧 Building INITIAL load params (historical data)")
         
-        # 🆕 Obtener PARTITION_MODE
-        partition_mode = getattr(self.table_config, 'partition_mode', 'AUTO').upper()
+        # 🆕 Obtener PARTITION_MODE, manejando None correctamente
+        partition_mode = getattr(self.table_config, 'partition_mode', None)
+        
+        # Si es None o string vacío, usar 'AUTO' como default
+        if not partition_mode:
+            partition_mode = 'AUTO'
+        else:
+            partition_mode = str(partition_mode).strip().upper()
+        
         logger.info(f"📊 PARTITION_MODE: {partition_mode}")
         
         # Evaluar PARTITION_MODE
@@ -60,7 +67,7 @@ class TimeRangeStrategy(ExtractionStrategy):
             logger.info("📅 Using DELAY_INCREMENTAL range (PARTITION_MODE=NONE)")
             return self._build_initial_with_delay_range()
             
-        else:  # AUTO
+        else:  # AUTO o cualquier otro valor
             logger.info("🔄 AUTO mode - determining best approach")
             if self._should_use_partitioned_load():
                 logger.info("📊 Auto selected: MIN/MAX partitioning")

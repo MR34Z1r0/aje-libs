@@ -1,7 +1,7 @@
 # strategies/implementations/full_load.py
 from typing import List
 from ..base.extraction_strategy import ExtractionStrategy
-from ..base.extraction_params import ExtractionParams
+from ....shared.models import ExtractionParams  # ✅ ExtractionParams movido a shared/models
 from ..base.strategy_types import ExtractionStrategyType
 from ....shared.services.logging import LoggerService
 from aje_libs.datalake.shared.models import LoadMode
@@ -53,8 +53,12 @@ class FullLoadStrategy(ExtractionStrategy):
             metadata['watermark_column'] = self.table_config.partition_column
             logger.info(f"📊 Watermark tracking enabled for: {self.table_config.partition_column}")
         
+        # Construir table_name con JOIN (preservando alias si existe)
+        table_name_with_joins = self._build_table_name_with_joins()
+        logger.debug(f"📎 Table with JOIN: {table_name_with_joins}")
+        
         params = ExtractionParams(
-            table_name=self._get_source_table_name(),
+            table_name=table_name_with_joins,
             columns=self._parse_columns(),
             metadata=metadata
         )
@@ -71,7 +75,14 @@ class FullLoadStrategy(ExtractionStrategy):
     
     def _should_use_partitioned_load_with_mode(self) -> bool:
         """🆕 MÉTODO MODIFICADO: Evalúa particionado según PARTITION_MODE"""
-        partition_mode = getattr(self.table_config, 'partition_mode', 'AUTO').upper()
+        # Obtener partition_mode, manejando None correctamente
+        partition_mode = getattr(self.table_config, 'partition_mode', None)
+        
+        # Si es None o string vacío, usar 'AUTO' como default
+        if not partition_mode:
+            partition_mode = 'AUTO'
+        else:
+            partition_mode = str(partition_mode).strip().upper()
         
         if partition_mode == 'MIN_MAX':
             # Forzar particionado
@@ -83,7 +94,7 @@ class FullLoadStrategy(ExtractionStrategy):
             # Nunca particionar
             return False
             
-        else:  # AUTO
+        else:  # AUTO o cualquier otro valor
             # Usar lógica existente
             return self._should_use_partitioned_load()
     

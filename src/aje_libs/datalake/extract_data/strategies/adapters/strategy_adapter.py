@@ -1,17 +1,19 @@
 # strategies/adapters/strategy_adapter.py
 from typing import List, Dict, Any, Optional
 from ...contracts.strategy_interface import IExtractionStrategy
+from ...contracts.query_builder_interface import IQueryBuilder
 from ..base.extraction_strategy import ExtractionStrategy
-from ..base.extraction_params import ExtractionParams
+from ....shared.models import ExtractionParams  # ✅ ExtractionParams desde shared/models
 from ....shared.services.logging import LoggerService
 from ....shared.utils.partition_formatter import PartitionFormatter
+from ...factories.query_builder_factory import QueryBuilderFactory
 
 logger = LoggerService.get_logger(__name__)
 
 class StrategyAdapter(IExtractionStrategy):
     """Adaptador para hacer compatible la nueva estrategia con la interfaz existente"""
     
-    def __init__(self, new_strategy: ExtractionStrategy, table_config: Optional[Any] = None):
+    def __init__(self, new_strategy: ExtractionStrategy, table_config: Optional[Any] = None, db_type: Optional[str] = None):
         self.new_strategy = new_strategy
         self.extraction_params = None
         self.watermark_storage = new_strategy.watermark_storage
@@ -21,6 +23,20 @@ class StrategyAdapter(IExtractionStrategy):
         if self.table_config and hasattr(self.table_config, 'partition_format'):
             partition_format = self.table_config.partition_format
         self.partition_formatter = PartitionFormatter(partition_format)
+        
+        # 🆕 Inicializar Query Builder específico por base de datos
+        self.query_builder: Optional[IQueryBuilder] = None
+        if db_type and self.table_config:
+            try:
+                self.query_builder = QueryBuilderFactory.create(
+                    db_type=db_type,
+                    table_config=self.table_config
+                )
+                logger.debug(f"✅ QueryBuilder inicializado: {type(self.query_builder).__name__} para DB: {db_type}")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo crear QueryBuilder para {db_type}: {e}. Usando construcción de query genérica.")
+        else:
+            logger.debug("⚠️ QueryBuilder no inicializado - db_type o table_config no disponible")
         
         # Log del formato que se usará
         logger.debug(f"StrategyAdapter inicializado - Formato de partición: {self.partition_formatter.format_template}")
@@ -59,23 +75,25 @@ class StrategyAdapter(IExtractionStrategy):
         """Genera query de min/max para particionado"""
         partition_column = self.extraction_params.metadata['partition_column']
         
-        # Usar el table_name completo que ya incluye el schema y JOIN si está configurado
-        table_name_with_joins = self.extraction_params.table_name
-        
-        # Construir query de min/max completa
-        min_max_query = f"SELECT MIN({partition_column}) as min_val, MAX({partition_column}) as max_val FROM {table_name_with_joins}"
-        
-        # Agregar condición WHERE para partition column != 0
-        where_conditions = [f"{partition_column} <> 0"]
-        
-        # Agregar otros filtros si existen
-        existing_where = self.extraction_params.get_where_clause()
-        if existing_where:
-            where_conditions.append(existing_where)
-        
-        # Construir clausula WHERE completa
-        if where_conditions:
-            min_max_query += f" WHERE {' AND '.join(where_conditions)}"
+        # 🆕 Usar QueryBuilder si está disponible, sino usar construcción genérica
+        if self.query_builder:
+            existing_where = self.extraction_params.get_where_clause()
+            min_max_query = self.query_builder.build_min_max_query(
+                column=partition_column,
+                additional_where=existing_where
+            )
+        else:
+            # Fallback a construcción genérica
+            table_name_with_joins = self.extraction_params.table_name
+            min_max_query = f"SELECT MIN({partition_column}) as min_val, MAX({partition_column}) as max_val FROM {table_name_with_joins}"
+            
+            where_conditions = [f"{partition_column} <> 0"]
+            existing_where = self.extraction_params.get_where_clause()
+            if existing_where:
+                where_conditions.append(existing_where)
+            
+            if where_conditions:
+                min_max_query += f" WHERE {' AND '.join(where_conditions)}"
         
         logger.info("🔍 Query MIN/MAX generada")
         logger.info(f"📝 SQL Query MIN/MAX:\n{min_max_query}")
@@ -107,18 +125,21 @@ class StrategyAdapter(IExtractionStrategy):
         return self.new_strategy.estimate_resources()
     
     def _build_query_from_params(self, params: ExtractionParams) -> str:
-        """Construye la query SQL a partir de los parámetros de extracción"""
+        """
+        Construye la query SQL a partir de los parámetros de extracción.
         
-        # SELECT clause - usar las columnas tal como vienen procesadas
+        🆕 Usa QueryBuilder específico por base de datos si está disponible,
+        sino usa construcción genérica como fallback.
+        """
+        # 🆕 Usar QueryBuilder si está disponible
+        if self.query_builder:
+            return self.query_builder.build_select_query(params)
+        
+        # Fallback a construcción genérica (compatible con cualquier DB)
         columns_str = ', '.join(params.columns) if params.columns != ['*'] else '*'
-        
-        # FROM clause con JOINs incluidos
         table_name = params.table_name
-        
-        # WHERE clause
         where_clause = params.get_where_clause()
         
-        # Construir query base
         query = f"SELECT {columns_str} FROM {table_name}"
         
         if where_clause:
@@ -128,6 +149,8 @@ class StrategyAdapter(IExtractionStrategy):
             query += f" ORDER BY {params.order_by}"
         
         if params.limit:
+            # ⚠️ LIMIT es genérico, pero algunos DBs usan TOP (SQL Server)
+            # En el fallback usamos LIMIT que funciona en PostgreSQL, MySQL, etc.
             query += f" LIMIT {params.limit}"
         
         return query

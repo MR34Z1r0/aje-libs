@@ -17,8 +17,16 @@ class StrategyFactory:
     
     @classmethod
     def create(cls, table_config: TableConfig, extraction_config: ExtractionConfig,
-               watermark_storage: IWatermarkStorage = None) -> IExtractionStrategy:
-        """Crea la estrategia apropiada basada en configuración"""
+               watermark_storage: IWatermarkStorage = None, db_type: Optional[str] = None) -> IExtractionStrategy:
+        """
+        Crea la estrategia apropiada basada en configuración.
+        
+        Args:
+            table_config: Configuración de la tabla
+            extraction_config: Configuración de extracción
+            watermark_storage: Storage para watermarks (opcional)
+            db_type: Tipo de base de datos ('sqlserver', 'postgresql', etc.) para QueryBuilder
+        """
         
         # Determinar tipo de estrategia
         strategy_type = cls._determine_strategy_type(table_config, extraction_config)
@@ -41,9 +49,9 @@ class StrategyFactory:
             logger.error(error_msg)
             raise ConfigurationError(error_msg)
         
-        # Envolver en adaptador para compatibilidad
+        # 🆕 Envolver en adaptador para compatibilidad, pasando db_type para QueryBuilder
         from ..strategies.adapters.strategy_adapter import StrategyAdapter
-        strategy_adapter = StrategyAdapter(new_strategy)
+        strategy_adapter = StrategyAdapter(new_strategy, table_config=table_config, db_type=db_type)
         
         return strategy_adapter
     

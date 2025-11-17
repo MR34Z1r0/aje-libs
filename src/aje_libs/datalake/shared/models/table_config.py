@@ -71,13 +71,23 @@ class TableConfig:
         if self.source_schema is not None and not self.source_schema.strip():
             object.__setattr__(self, 'source_schema', None)
         
+        # Normalizar partition_mode: convertir 'NONE', 'none', '', etc. a None
+        if self.partition_mode is not None:
+            partition_mode_str = str(self.partition_mode).strip()
+            if not partition_mode_str or partition_mode_str.upper() in ('NONE', 'NULL'):
+                object.__setattr__(self, 'partition_mode', None)
+            else:
+                partition_mode_normalized = partition_mode_str.upper()
+                if partition_mode_normalized != partition_mode_str:
+                    object.__setattr__(self, 'partition_mode', partition_mode_normalized)
+        
         # Validar id_column si load_type es incremental
         if load_type_lower == 'incremental' and not self.id_column:
             raise ValueError(
                 "id_column es requerido cuando load_type es 'incremental'"
             )
         
-        # Validar partition_column si partition_mode está configurado
+        # Validar partition_column si partition_mode está configurado (y no es None)
         if self.partition_mode and not self.partition_column:
             raise ValueError(
                 "partition_column es requerido cuando partition_mode está configurado"
