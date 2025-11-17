@@ -8,7 +8,9 @@ import boto3
 from aje_libs.datalake.light_transform.contracts.data_processing import ILightTransformProcessor
 from aje_libs.datalake.light_transform.services.configuration.configuration_service import ConfigurationService
 from aje_libs.datalake.light_transform.services.data_processing import DataProcessor, SparkDataLoader
-from aje_libs.datalake.light_transform.services.storage.delta_table_manager import DeltaTableManager, DeltaTableWriter
+# ✅ Imports actualizados para nueva estructura organizada
+# No se importa directamente, se usa TableWriterFactory en su lugar
+from aje_libs.datalake.shared.factories import TableWriterFactory  # ✅ Factory para table writers
 from aje_libs.datalake.light_transform.services.transformation.transformation_engine import TransformationEngine
 from aje_libs.datalake.light_transform.services.logging.datalake_logger import DataLakeLogger
 from aje_libs.datalake.shared.services import LocalCsvLoader, MultiSourceCsvLoader, S3CsvLoader
@@ -53,9 +55,16 @@ class LightTransformProcessorFactory:
         raise ValueError(f"Data loader type no soportado: {self.data_loader_type}")
 
     def _create_data_writer(self):
-        if self.data_writer_type == 'delta':
-            return DeltaTableWriter(self.spark, logger=self.logger)
-        raise ValueError(f"Data writer type no soportado: {self.data_writer_type}")
+        """
+        Crea un data writer usando TableWriterFactory (DIP - Dependency Inversion)
+        Soporta múltiples formatos: delta, iceberg, etc.
+        """
+        # ✅ Usar TableWriterFactory para crear el writer apropiado (OCP - extensible)
+        return TableWriterFactory.create(
+            writer_type=self.data_writer_type,
+            spark=self.spark,
+            logger=self.logger
+        )
 
     def create(self) -> ILightTransformProcessor:
         """Construye una instancia de `ILightTransformProcessor`."""
@@ -71,6 +80,7 @@ class LightTransformProcessorFactory:
             data_loader=data_loader,
             data_writer=data_writer,
             logger=self.logger,
+            table_format=self.data_writer_type,  # ✅ Pasar formato de tabla para existencia checks
         )
 
 

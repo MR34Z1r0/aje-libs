@@ -1,6 +1,10 @@
-"""Servicios de configuración compartidos del datalake."""
+"""
+Configuración compartida para aje_libs/datalake
+"""
+from .settings import ExtractionSettings, LightTransformSettings, get_settings
 
-from .settings import settings, Settings
-
-__all__ = ["Settings", "settings"]
-
+__all__ = [
+    'ExtractionSettings',
+    'LightTransformSettings',
+    'get_settings',
+]

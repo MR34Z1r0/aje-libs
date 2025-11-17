@@ -10,6 +10,7 @@ from .configuration.csv_loader import (
 from .logging import LoggerService
 from .monitoring import MonitorService, EventLoggerService, NotificationService
 from .cleanup import CleanupService, S3CleanupService, DynamoDBCleanupService
+from .secrets import AWSSecretsProvider  # ✅ Nuevo servicio
 
 __all__ = [
     'ICsvLoader',
@@ -24,5 +25,6 @@ __all__ = [
     'CleanupService',
     'S3CleanupService',
     'DynamoDBCleanupService',
+    'AWSSecretsProvider',  # ✅ Nuevo servicio
 ]
 

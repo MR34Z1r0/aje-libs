@@ -5,9 +5,10 @@ import pyarrow.parquet as pq
 import io
 from typing import Dict, Any, Optional
 from aje_libs.datalake.shared.exceptions import StorageException as LoadError
+from ...contracts.formatter_interface import IFormatter
 
-class ParquetFormatter:
-    """Format data as Parquet files"""
+class ParquetFormatter(IFormatter):
+    """Format data as Parquet files (ISP - implements IFormatter)"""
     
     def __init__(self, **kwargs):
         self.compression = kwargs.get('compression', 'snappy')

@@ -22,12 +22,15 @@ class WatermarkStorageFactory:
         """
         # Crear storage base
         if storage_type.lower() == 'dynamodb':
+            # ✅ DIP: DynamoDBWatermarkStorage ahora usa IDatabaseProvider internamente
+            # Si se proporciona 'region', se usará para crear el provider automáticamente
             base_storage = DynamoDBWatermarkStorage(
                 table_name=config['table_name'],
                 project_name=config['project_name'],
                 team=config.get('team', ''),
                 data_source=config.get('data_source', ''),
-                endpoint_name=config.get('endpoint_name', '')
+                endpoint_name=config.get('endpoint_name', ''),
+                region=config.get('region')  # ✅ Pasar región si está disponible (para crear provider)
             )
         elif storage_type.lower() == 'csv':
             base_storage = CSVWatermarkStorage(

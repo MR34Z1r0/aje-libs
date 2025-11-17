@@ -7,9 +7,11 @@ from .contracts import IExtractor, ILoader, IExtractionStrategy
 from .models import (
     ExtractionConfig,
     ExtractionResult,
-    DatabaseConfig,
+)
+from ..shared.models import (
+    DatabaseConfig,  # ✅ Movido a shared/models
+    FileMetadata,  # ✅ Movido a shared/models
     TableConfig,
-    FileMetadata,
     LoadMode,
     ColumnMetadata,
     EndpointConfig,

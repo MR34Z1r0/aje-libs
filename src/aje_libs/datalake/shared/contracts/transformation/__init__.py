@@ -1,4 +1,0 @@
-"""
-Contratos de transformación compartidos.
-"""
-

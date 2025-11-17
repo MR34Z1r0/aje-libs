@@ -1,232 +1,119 @@
-# -*- coding: utf-8 -*-
 """
-Gestión centralizada de configuración para pipelines del datalake.
+Configuración centralizada para aje_libs/datalake
+✅ Evita valores hardcodeados en el código
 """
-
-from __future__ import annotations
-
-import os
-import sys
-from pathlib import Path
-from typing import Any, Dict, Optional, Union
-
-import boto3
+from dataclasses import dataclass, field
+from typing import Dict, Any, Optional
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
+@dataclass(frozen=True)
+class ExtractionSettings:
+    """Configuración para extracción de datos"""
+    
+    # Tamaños de chunks
+    default_chunk_size: int = 10000
+    max_chunk_size: int = 100000
+    min_chunk_size: int = 1000
+    
+    # Timeouts (segundos)
+    default_query_timeout: int = 300  # 5 minutos
+    max_query_timeout: int = 3600     # 1 hora
+    connection_timeout: int = 30
+    
+    # Retry
+    default_max_retries: int = 3
+    default_retry_delay: float = 1.0  # segundos
+    max_retry_delay: float = 60.0
+    
+    # Watermarks
+    watermark_retention_days: int = 90
+    max_watermark_history: int = 100
+    
+    # S3
+    s3_upload_chunk_size: int = 8388608  # 8 MB
+    s3_max_concurrent_uploads: int = 10
+    
+    # Cleanup
+    cleanup_batch_size: int = 1000  # Para eliminar objetos de S3/DynamoDB en lotes
+    
+    # Logging
+    log_rotation_max_bytes: int = 10485760  # 10 MB
+    log_rotation_backup_count: int = 5
+    
+    # Particiones
+    default_partition_format: str = "year={year}/month={month}/day={day}"
+    
+    # Validación
+    max_column_name_length: int = 255
+    max_table_name_length: int = 255
+    
+    @classmethod
+    def from_dict(cls, config: Dict[str, Any]) -> 'ExtractionSettings':
+        """Crea settings desde un diccionario"""
+        return cls(**{k: v for k, v in config.items() if k in cls.__dataclass_fields__})
 
 
-class Settings:
-    """Administra la configuración según el entorno (local, Glue, etc.)."""
-
-    def __init__(
-        self,
-        force_glue: Optional[bool] = None,
-        env_path: Optional[Union[str, Path]] = None,
-    ):
-        self._load_env_file(env_path)
-        self.is_aws_glue = force_glue if force_glue is not None else self._detect_aws_glue()
-        self.is_aws_s3 = self._detect_aws_s3()
-        self._config = self._load_configuration()
-        self._setup_aws_session()
-
-    def _load_env_file(self, env_path: Optional[Union[str, Path]]) -> None:
-        try:
-            from dotenv import load_dotenv
-        except ImportError:
-            # Solo mostrar si realmente es necesario (cuando falte el .env)
-            return
-
-        # Si se proporciona una ruta explícita, usarla
-        if env_path:
-            path = Path(env_path).expanduser()
-            if path.exists():
-                try:
-                    load_dotenv(path)
-                    return
-                except Exception as exc:
-                    print(f"⚠️ Error al cargar .env desde {path}: {exc}")
-            else:
-                print(f"⚠️ No se encontró .env en: {path}")
-            return
-
-        # Buscar .env desde el directorio de trabajo actual hacia arriba
-        current_dir = Path.cwd()
-        for parent in [current_dir] + list(current_dir.parents):
-            env_file = parent / ".env"
-            if env_file.exists():
-                try:
-                    load_dotenv(env_file)
-                    return
-                except Exception as exc:
-                    print(f"⚠️ Error al cargar .env desde {env_file}: {exc}")
-                    continue
-
-        # Como último recurso, intentar con DEFAULT_ENV_PATH
-        if DEFAULT_ENV_PATH.exists():
-            try:
-                load_dotenv(DEFAULT_ENV_PATH)
-                return
-            except Exception as exc:
-                print(f"⚠️ Error al cargar .env desde {DEFAULT_ENV_PATH}: {exc}")
-                return
-
-        # Solo mostrar error si no se encontró en ningún lugar
-        print(f"⚠️ No se encontró archivo .env (buscado desde: {current_dir})")
-
-    def _detect_aws_glue(self) -> bool:
-        return "AWS_EXECUTION_ENV" in os.environ or "GLUE_VERSION" in os.environ
-
-    def _detect_aws_s3(self) -> bool:
-        return self.is_aws_glue or os.environ.get("USE_S3_CONFIG", "false").lower() == "true"
-
-    def _setup_aws_session(self) -> None:
-        try:
-            region_name = self._config.get("REGION", "us-east-1")
-            profile_name = self._config.get("AWS_PROFILE")
-
-            if not self.is_aws_glue and profile_name:
-                boto3.setup_default_session(profile_name=profile_name, region_name=region_name)
-            elif not self.is_aws_glue:
-                boto3.setup_default_session(region_name=region_name)
-            # En Glue no se configura sesión explícitamente, usa IAM role automáticamente
-        except Exception as exc:
-            # Solo mostrar errores, no éxitos
-            print(f"⚠️ Error al configurar sesión AWS: {exc}")
-
-    def _load_configuration(self) -> Dict[str, Any]:
-        if self.is_aws_glue:
-            return self._load_glue_config()
-        return self._load_local_config()
-
-    def _load_glue_config(self) -> Dict[str, Any]:
-        try:
-            from awsglue.utils import getResolvedOptions
-        except ImportError:
-            # Fallback silencioso a configuración local
-            return self._load_local_config()
-
-        try:
-            # Usar solo nombres genéricos
-            args = getResolvedOptions(
-                sys.argv,
-                [
-                    "raw_bucket",
-                    "project_name",
-                    "team",
-                    "data_source",
-                    "environment",
-                    "region",
-                    "logs_table",
-                    "table_name",
-                    "tables",
-                    "credentials",
-                    "columns",
-                    "endpoint_name",
-                    "topic_arn",
-                ],
-            )
-
-            max_threads = int(args.get("max_threads", "6"))
-            chunk_size = int(args.get("chunk_size", "1000000"))
-
-            return {
-                "raw_bucket": args.get("raw_bucket"),
-                "project_name": args.get("project_name"),
-                "team": args.get("team"),
-                "data_source": args.get("data_source"),
-                "environment": args.get("environment"),
-                "region": args.get("region"),
-                "logs_table": args.get("logs_table"),
-                "table_name": args.get("table_name"),
-                "tables": args.get("tables"),
-                "credentials": args.get("credentials"),
-                "columns": args.get("columns"),
-                "endpoint_name": args.get("endpoint_name"),
-                "topic_arn": args.get("topic_arn"),
-                "max_threads": max_threads,
-                "chunk_size": chunk_size,
-                "output_format": args.get("output_format", "parquet"),
-                "extractor_type": args.get("extractor_type", "sqlserver"),
-                "loader_type": args.get("loader_type", "s3"),
-                "monitor_type": args.get("monitor_type", "dynamodb"),
-                "AWS_PROFILE": None,
-            }
-        except Exception as exc:
-            # Fallback silencioso a configuración local en caso de error
-            return self._load_local_config()
-
-    def _require_env_vars(self, required_vars: list[str]) -> None:
-        missing = [var for var in required_vars if os.getenv(var) is None]
-        if missing:
-            raise ValueError(
-                f"Missing required environment variables: {missing}. "
-                "Verifica tu archivo .env o variables de entorno."
-            )
-
-    def _load_local_config(self) -> Dict[str, Any]:
-        required = [
-            "MAX_THREADS",
-            "CHUNK_SIZE",
-            "project_name",
-            "team",
-            "data_source",
-            "REGION",
-            "CONNECTION_TIMEOUT",
-            "LOGIN_TIMEOUT",
-            "MAX_RETRIES",
-            "RETRY_DELAY",
-            "CONNECTION_POOL_SIZE",
-            "CONNECTION_POOL_RECYCLE",
-        ]
-        self._require_env_vars(required)
-
-        return {
-            "raw_bucket": os.getenv("raw_bucket"),
-            "project_name": os.getenv("project_name"),
-            "team": os.getenv("team"),
-            "data_source": os.getenv("data_source"),
-            "environment": os.getenv("environment"),
-            "region": os.getenv("region"),
-            "logs_table": os.getenv("logs_table"),
-            "table_name": os.getenv("table_name", ""),
-            "tables": os.getenv("tables"),
-            "credentials": os.getenv("credentials"),
-            "columns": os.getenv("columns"),
-            "endpoint_name": os.getenv("endpoint_name"),
-            "topic_arn": os.getenv("topic_arn"),
-            "max_threads": int(os.getenv("max_threads", "6")),
-            "chunk_size": int(os.getenv("chunk_size", "1000000")),
-            "output_format": os.getenv("output_format", "parquet"),
-            "extractor_type": os.getenv("extractor_type"),
-            "LOADER_TYPE": os.getenv("LOADER_TYPE"),
-            "monitor_type": os.getenv("monitor_type"),
-            "AWS_PROFILE": os.getenv("AWS_PROFILE"),
-            "WATERMARK_STORAGE_TYPE": os.getenv("WATERMARK_STORAGE_TYPE"),
-            "WATERMARK_TABLE": os.getenv("WATERMARK_TABLE"),
-            "WATERMARK_CSV_PATH": os.getenv("WATERMARK_CSV_PATH"),
-            "WATERMARK_PG_CONNECTION": os.getenv("WATERMARK_PG_CONNECTION"),
-            "WATERMARK_PG_SCHEMA": os.getenv("WATERMARK_PG_SCHEMA"),
-            "CONNECTION_TIMEOUT": int(os.getenv("CONNECTION_TIMEOUT")),
-            "LOGIN_TIMEOUT": int(os.getenv("LOGIN_TIMEOUT")),
-            "MAX_RETRIES": int(os.getenv("MAX_RETRIES")),
-            "RETRY_DELAY": int(os.getenv("RETRY_DELAY")),
-            "USE_SQLALCHEMY": os.getenv("USE_SQLALCHEMY", "false").lower() == "true",
-            "CONNECTION_POOL_SIZE": int(os.getenv("CONNECTION_POOL_SIZE")),
-            "CONNECTION_POOL_RECYCLE": int(os.getenv("CONNECTION_POOL_RECYCLE")),
-        }
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._config.get(key, default)
-
-    def get_all(self) -> Dict[str, Any]:
-        return self._config.copy()
-
-    def update(self, updates: Dict[str, Any]) -> None:
-        self._config.update(updates)
+@dataclass(frozen=True)
+class LightTransformSettings:
+    """Configuración para light transform"""
+    
+    # Spark
+    spark_default_parallelism: int = 200
+    spark_max_result_size: str = "2g"
+    spark_dynamic_allocation: bool = True
+    
+    # Delta/Iceberg
+    delta_auto_optimize: bool = True
+    delta_auto_compact: bool = False
+    iceberg_table_properties: Dict[str, str] = field(default_factory=dict)
+    
+    # Write operations
+    merge_batch_size: int = 10000
+    overwrite_mode: str = "dynamic"  # "static" o "dynamic"
+    
+    # Validación de datos
+    data_quality_checks: bool = True
+    strict_schema_validation: bool = False
+    
+    # Performance
+    coalesce_partitions: bool = True
+    repartition_threshold: int = 1000
+    
+    @classmethod
+    def from_dict(cls, config: Dict[str, Any]) -> 'LightTransformSettings':
+        """Crea settings desde un diccionario"""
+        return cls(**{k: v for k, v in config.items() if k in cls.__dataclass_fields__})
 
 
-settings = Settings(force_glue=False)
+# Singleton global para settings (puede ser sobrescrito)
+_extraction_settings: Optional[ExtractionSettings] = None
+_light_transform_settings: Optional[LightTransformSettings] = None
 
+
+def get_settings() -> ExtractionSettings:
+    """Obtiene configuración de extracción (singleton)"""
+    global _extraction_settings
+    if _extraction_settings is None:
+        _extraction_settings = ExtractionSettings()
+    return _extraction_settings
+
+
+def get_light_transform_settings() -> LightTransformSettings:
+    """Obtiene configuración de light transform (singleton)"""
+    global _light_transform_settings
+    if _light_transform_settings is None:
+        _light_transform_settings = LightTransformSettings()
+    return _light_transform_settings
+
+
+def configure_extraction_settings(settings: ExtractionSettings) -> None:
+    """Configura settings de extracción (útil para tests o personalización)"""
+    global _extraction_settings
+    _extraction_settings = settings
+
+
+def configure_light_transform_settings(settings: LightTransformSettings) -> None:
+    """Configura settings de light transform (útil para tests o personalización)"""
+    global _light_transform_settings
+    _light_transform_settings = settings
 

@@ -5,7 +5,7 @@ from ..strategies.base.strategy_types import ExtractionStrategyType
 from ..strategies.registry.strategy_registry import StrategyRegistry
 from ..contracts.strategy_interface import IExtractionStrategy
 from ...shared.contracts.watermark import IWatermarkStorage
-from ..models.table_config import TableConfig
+from ...shared.models import TableConfig
 from ..models.extraction_config import ExtractionConfig
 from aje_libs.datalake.shared.exceptions import ConfigurationException as ConfigurationError
 from ...shared.services.logging import LoggerService

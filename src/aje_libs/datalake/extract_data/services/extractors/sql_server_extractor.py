@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
 import time
 import pandas as pd
-from typing import Optional, Tuple, Iterator, Dict, Any
+from typing import Optional, Tuple, Iterator, Dict, Any, TYPE_CHECKING
 from datetime import datetime
 from ...contracts.extractor_interface import IExtractor
-from ...models.database_config import DatabaseConfig
+from ....shared.models import DatabaseConfig  # ✅ Movido a shared/models
 from aje_libs.datalake.shared.exceptions import (
     ConfigurationException as ConnectionError,
     ProcessingError as ExtractionError,
 )
-from aje_libs.common.helpers.secrets_helper import SecretsHelper
+# ✅ DIP: Usar interfaz en lugar de implementación concreta
+if TYPE_CHECKING:
+    from ....shared.contracts.secrets import ISecretProvider
+else:
+    ISecretProvider = None  # Para evitar importación circular
 
 try:
     import sqlalchemy
@@ -22,18 +26,49 @@ except ImportError:
 class SQLServerExtractor(IExtractor):
     """SQL Server implementation with SQLAlchemy support for better pandas compatibility"""
     
-    def __init__(self, config: DatabaseConfig, name_logger: str = None):
+    def __init__(
+        self, 
+        config: DatabaseConfig, 
+        secret_provider: Optional['ISecretProvider'] = None,  # ✅ DIP: Usar interfaz
+        name_logger: Optional[str] = None
+    ):
+        """
+        Inicializa el extractor de SQL Server
+        
+        Args:
+            config: Configuración de base de datos
+            secret_provider: Proveedor de secretos (opcional, se crea si no se proporciona)
+            name_logger: Nombre del logger (opcional)
+        """
         self.config = config
         self.connection = None
         self.engine = None
-        self._secrets_helper = None
         self._password = None
-        self.max_retries = 3
-        self.retry_delay = 5
+        # ✅ Usar configuración centralizada en lugar de valores hardcodeados
+        from ....shared.config import get_settings
+        settings = get_settings()
+        self.max_retries = settings.default_max_retries
+        self.retry_delay = settings.default_retry_delay
         self.use_sqlalchemy = True  # Prefer SQLAlchemy when available
 
         from ....shared.services.logging import LoggerService
         self.logger = LoggerService.get_logger(name_logger or __name__)
+        
+        # ✅ DIP: Usar interfaz en lugar de implementación concreta
+        # Si no se proporciona secret_provider, crear uno por defecto usando factory
+        if secret_provider is None:
+            from ....shared.factories import SecretProviderFactory
+            # Obtener región de config si está disponible
+            region = getattr(config, 'region', None)
+            self._secret_provider = SecretProviderFactory.create(
+                provider_type='aws_secrets_manager',
+                region=region,
+                logger_name=f"{__name__}.secrets"
+            )
+            self.logger.debug("✅ Secret provider creado automáticamente usando factory")
+        else:
+            self._secret_provider = secret_provider
+            self.logger.debug("✅ Secret provider proporcionado externamente")
     
     def connect(self):
         """Establish connection using SQLAlchemy engine for better pandas compatibility"""
@@ -345,12 +380,24 @@ class SQLServerExtractor(IExtractor):
                 self.connection = None
     
     def _get_password(self):
-        """Get password from secrets manager"""
-        if not self._secrets_helper:
-            secret_path = f"{self.config.secret_name.lower()}"
-            self._secrets_helper = SecretsHelper(secret_path)
-        
-        self._password = self._secrets_helper.get_secret_value(self.config.secret_key)
+        """Get password from secrets provider (DIP - usa interfaz, no implementación concreta)"""
+        if not self._password:
+            secret_name = self.config.secret_name.lower() if self.config.secret_name else ""
+            secret_key = self.config.secret_key or 'password'
+            
+            if not secret_name:
+                raise ConnectionError("secret_name no está configurado en DatabaseConfig")
+            
+            # ✅ Seguridad: Solo loguear información no sensible
+            self.logger.debug(f"Obteniendo secreto: {secret_name}, clave: {secret_key}")
+            # ✅ DIP: Usar interfaz ISecretProvider en lugar de SecretsHelper concreta
+            self._password = self._secret_provider.get_secret_value(secret_name, secret_key)
+            
+            if not self._password:
+                raise ConnectionError(f"No se pudo obtener el secreto '{secret_key}' de '{secret_name}'")
+            
+            # ✅ Seguridad: No loguear el password obtenido
+            self.logger.debug(f"✅ Secreto obtenido exitosamente de '{secret_name}' (clave: {secret_key})")
     
     def _fix_duplicate_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """Fix duplicate column names"""

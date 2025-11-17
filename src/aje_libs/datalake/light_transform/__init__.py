@@ -3,13 +3,21 @@ aje_libs.datalake.light_transform - Módulo de transformación ligera
 
 Contiene toda la funcionalidad específica de transformación de datos en AWS Glue.
 """
-from .models import ColumnMetadata, TableConfig, EndpointConfig, LightTransformConfig
+from .models import LightTransformConfig, LightTransformResult
+from aje_libs.datalake.shared.models import ColumnMetadata, TableConfig, EndpointConfig  # ✅ Movidos a shared/models
 from .factories import (
     LightTransformConfigFactory,
     LightTransformProcessorFactory,
+    DefaultLightTransformComponentFactory,  # ✅ Nueva factory
 )
 from .orchestrators.light_transform_orchestrator import LightTransformOrchestrator
-from .services.storage.delta_table_manager import DeltaTableWriter, TimeRangeDeleteManager
+from .strategies import (
+    WriteStrategyFactory,  # ✅ Factory de estrategias de escritura
+    WriteStrategyValidator,  # ✅ Validador de estrategias de escritura
+)
+from .services.storage.delta import DeltaTableWriter, TimeRangeDeleteManager as DeltaTimeRangeDeleteManager
+from .services.storage.iceberg import IcebergTableWriter, TimeRangeDeleteManager as IcebergTimeRangeDeleteManager
+from .services.storage.parquet import ParquetTableWriter
 from .services import (
     ConfigurationService,
     ExpressionParser,
@@ -34,18 +42,29 @@ from aje_libs.datalake.shared.exceptions import (
 
 __all__ = [
     # Models
-    'ColumnMetadata', 'TableConfig', 'EndpointConfig', 'LightTransformConfig',
+    'LightTransformConfig', 'LightTransformResult',
+    'ColumnMetadata', 'TableConfig', 'EndpointConfig',  # ✅ Reexportados desde shared/models para compatibilidad
     # Factories
     'LightTransformConfigFactory',
     'LightTransformProcessorFactory',
+    'DefaultLightTransformComponentFactory',  # ✅ Nueva factory
     # Orchestrators
     'LightTransformOrchestrator',
+    # Strategies
+    'WriteStrategyFactory',  # ✅ Factory de estrategias de escritura
+    'WriteStrategyValidator',  # ✅ Validador de estrategias de escritura
     # Services
     'ConfigurationService',
     'ExpressionParser',
     'TransformationEngine',
+    # Delta Lake
     'DeltaTableWriter',
-    'TimeRangeDeleteManager',
+    'DeltaTimeRangeDeleteManager',
+    # Apache Iceberg
+    'IcebergTableWriter',
+    'IcebergTimeRangeDeleteManager',
+    # PySpark puro (Parquet)
+    'ParquetTableWriter',
     'DataLakeLogger',
     'DynamoDBLogger',
     'Monitor',

@@ -3,9 +3,10 @@ import pandas as pd
 import io
 from typing import Dict, Any, Optional
 from aje_libs.datalake.shared.exceptions import StorageException as LoadError
+from ...contracts.formatter_interface import IFormatter
 
-class CSVFormatter:
-    """Format data as CSV files"""
+class CSVFormatter(IFormatter):
+    """Format data as CSV files (ISP - implements IFormatter)"""
     
     def __init__(self, **kwargs):
         self.separator = kwargs.get('separator', '|')

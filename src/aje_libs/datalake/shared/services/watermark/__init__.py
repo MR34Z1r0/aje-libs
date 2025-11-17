@@ -1,4 +1,0 @@
-"""
-Servicios de watermark compartidos.
-"""
-

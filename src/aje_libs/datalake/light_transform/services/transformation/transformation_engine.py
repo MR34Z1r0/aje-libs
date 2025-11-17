@@ -19,7 +19,7 @@ from pyspark.sql.types import (
 )
 
 from aje_libs.datalake.light_transform.contracts.transformation import ITransformationEngine
-from aje_libs.datalake.light_transform.models import ColumnMetadata
+from aje_libs.datalake.shared.models import ColumnMetadata  # ✅ Movido a shared/models
 from aje_libs.datalake.light_transform.services.logging.datalake_logger import DataLakeLogger
 from .expression_parser import ExpressionParser
 

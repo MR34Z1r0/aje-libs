@@ -139,7 +139,8 @@ class DynamoDBLogger:
     def __init__(
         self,
         table_name: str,
-        sns_topic_arn: Optional[str] = None,
+        sns_topic_arn: Optional[str] = None,  # ⚠️ DEPRECATED: Usar sns_topic_arns en su lugar
+        sns_topic_arns: Optional[Dict[str, str]] = None,  # ✅ Dict con keys: 'failed', 'success', 'warning'
         team: str = "",
         data_source: str = "",
         endpoint_name: str = "",
@@ -151,7 +152,20 @@ class DynamoDBLogger:
     ):
         """Inicializa el DynamoDB Logger"""
         self.table_name = table_name
-        self.sns_topic_arn = sns_topic_arn
+        
+        # ✅ Manejar múltiples notification targets (preferir sns_topic_arns)
+        if sns_topic_arns:
+            self.sns_topic_arns = sns_topic_arns
+            # ⚠️ Mantener compatibilidad: usar "failed" como sns_topic_arn
+            self.sns_topic_arn = sns_topic_arns.get('failed')
+        elif sns_topic_arn:
+            # Compatibilidad hacia atrás: convertir sns_topic_arn a dict con solo 'failed'
+            self.sns_topic_arn = sns_topic_arn
+            self.sns_topic_arns = {'failed': sns_topic_arn}
+        else:
+            self.sns_topic_arn = None
+            self.sns_topic_arns = {}
+        
         self.team = team
         self.data_source = data_source
         self.endpoint_name = endpoint_name
@@ -173,9 +187,12 @@ class DynamoDBLogger:
         try:
             self.dynamodb = boto3.resource('dynamodb', region_name=region)
             self.dynamodb_table = self.dynamodb.Table(table_name) if table_name else None
-            self.sns_client = boto3.client('sns', region_name=region) if sns_topic_arn else None
+            # ✅ Inicializar cliente SNS si hay al menos un ARN configurado
+            has_sns_arn = bool(self.sns_topic_arns) or bool(self.sns_topic_arn)
+            self.sns_client = boto3.client('sns', region_name=region) if has_sns_arn else None
 
-            self.logger.info(f"DynamoDBLogger inicializado - Tabla: {table_name}, SNS: {bool(sns_topic_arn)}")
+            sns_info = f"SNS targets: {list(self.sns_topic_arns.keys())}" if self.sns_topic_arns else "SNS: None"
+            self.logger.info(f"DynamoDBLogger inicializado - Tabla: {table_name}, {sns_info}")
 
         except Exception as e:
             self.logger.warning(f"Error inicializando clientes AWS: {e}")
@@ -230,9 +247,14 @@ class DynamoDBLogger:
             self.dynamodb_table.put_item(Item=record)
             self.logger.info(f"Log registrado en DynamoDB - process_id={process_id}, status={status}, table={table_name}")
 
-            # Enviar notificación SNS si es error
-            if status.upper() == "FAILED":
-                self._send_failure_notification(record)
+            # ✅ Enviar notificación SNS según el tipo de evento (failed, success, warning)
+            status_upper = status.upper()
+            if status_upper == "FAILED":
+                self._send_notification(record, event_type="failed")
+            elif status_upper == "SUCCESS":
+                self._send_notification(record, event_type="success")
+            elif status_upper == "WARNING":
+                self._send_notification(record, event_type="warning")
 
             return process_id
 
@@ -241,7 +263,7 @@ class DynamoDBLogger:
 
             # Si falló el registro pero era un error, intentar enviar SNS de emergencia
             if status.upper() == "FAILED":
-                self._send_emergency_notification(message, table_name, str(e))
+                self._send_emergency_notification(message, table_name, str(e), event_type="failed")
 
             return ""
 
@@ -387,56 +409,98 @@ class DynamoDBLogger:
             return "incremental_with_warnings"
         return "error_handling"
 
-    def _send_failure_notification(self, record: Dict[str, Any]):
-        """Envía notificación SNS por error"""
-        if not self.sns_client or not self.sns_topic_arn:
-            self.logger.warning("SNS no configurado, no se puede enviar notificación de error")
+    def _send_notification(self, record: Dict[str, Any], event_type: str = "failed"):
+        """
+        ✅ Envía notificación SNS según el tipo de evento (failed, success, warning)
+        
+        Args:
+            record: Registro del log
+            event_type: Tipo de evento ('failed', 'success', 'warning')
+        """
+        # Obtener ARN del tipo de evento correspondiente
+        topic_arn = self.sns_topic_arns.get(event_type) or self.sns_topic_arn  # Fallback a 'failed' si no existe
+        
+        if not self.sns_client or not topic_arn:
+            self.logger.debug(f"SNS no configurado para '{event_type}', notificación no enviada")
             return
 
         try:
             message_text = str(record.get("MESSAGE", ""))
             truncated_message = message_text[:800] + "..." if len(message_text) > 800 else message_text
+            
+            status = record.get('STATUS', '')
+            table_name = record.get("TABLE_NAME", "")
+            team = record.get("TEAM", "")
+            
+            # Personalizar mensaje según el tipo de evento
+            if event_type == "failed":
+                emoji = "🚨"
+                title = "PROCESO FALLIDO"
+                event_label = "ERROR"
+                subject_prefix = "🚨 [ERROR]"
+            elif event_type == "success":
+                emoji = "✅"
+                title = "PROCESO EXITOSO"
+                event_label = "RESULTADO"
+                subject_prefix = "✅ [SUCCESS]"
+            elif event_type == "warning":
+                emoji = "⚠️"
+                title = "ADVERTENCIA EN PROCESO"
+                event_label = "ADVERTENCIA"
+                subject_prefix = "⚠️ [WARNING]"
+            else:
+                emoji = "ℹ️"
+                title = "NOTIFICACIÓN DE PROCESO"
+                event_label = "INFORMACIÓN"
+                subject_prefix = "ℹ️ [INFO]"
 
             notification_message = f"""
-🚨 PROCESO FALLIDO EN LIGHT TRANSFORM
+{emoji} {title} EN {self.flow_name.upper()}
 
 📊 DETALLES:
-- Estado: {record.get('STATUS')}
-- Tabla: {record.get("TABLE_NAME")}
-- Equipo: {record.get("TEAM")}
+- Estado: {status}
+- Tabla: {table_name}
+- Equipo: {team}
 - Flujo: {self.flow_name}
-- Ambiente: {record.get("ENVIRONMENT")}
-- Timestamp: {record.get("LOG_CREATED_AT")}
+- Ambiente: {record.get("ENVIRONMENT", "")}
+- Timestamp: {record.get("LOG_CREATED_AT", "")}
 
-❌ ERROR:
+{emoji} {event_label}:
 {truncated_message}
 
 🔍 IDENTIFICADORES:
-- Process ID: {record.get('PROCESS_ID')}
-- Resource: {record.get('RESOURCE_NAME')}
+- Process ID: {record.get('PROCESS_ID', '')}
+- Resource: {record.get('RESOURCE_NAME', '')}
 
 📋 ACCIONES:
 1. Consulta logs completos en DynamoDB usando el PROCESS_ID
 2. Revisa CloudWatch logs para más detalles
-3. Verifica la configuración de la tabla y transformaciones
+3. Verifica la configuración según sea necesario
 
-⚠️ Este mensaje se envía automáticamente. El job se marca como SUCCESS para evitar dobles notificaciones.
+⚠️ Este mensaje se envía automáticamente.
             """
 
             self.sns_client.publish(
-                TopicArn=self.sns_topic_arn,
-                Subject=f"🚨 [ERROR] LIGHT TRANSFORM - {record.get('TABLE_NAME')} - {record.get('TEAM')}",
+                TopicArn=topic_arn,
+                Subject=f"{subject_prefix} {self.flow_name.upper()} - {table_name} - {team}",
                 Message=notification_message
             )
 
-            self.logger.info("Notificación SNS enviada exitosamente")
+            self.logger.info(f"Notificación SNS enviada exitosamente - Tipo: {event_type}, Target: {topic_arn}")
 
         except Exception as e:
-            self.logger.error(f"Error enviando notificación SNS: {e}")
+            self.logger.error(f"Error enviando notificación SNS ({event_type}): {e}")
 
-    def _send_emergency_notification(self, message: str, table_name: str, dynamodb_error: str):
+    def _send_failure_notification(self, record: Dict[str, Any]):
+        """⚠️ DEPRECATED: Usar _send_notification(record, event_type='failed') en su lugar"""
+        self._send_notification(record, event_type="failed")
+
+    def _send_emergency_notification(self, message: str, table_name: str, dynamodb_error: str, event_type: str = "failed"):
         """Envía notificación de emergencia cuando falla DynamoDB"""
-        if not self.sns_client or not self.sns_topic_arn:
+        # Obtener ARN del tipo de evento correspondiente (fallback a 'failed')
+        topic_arn = self.sns_topic_arns.get(event_type) or self.sns_topic_arn
+        
+        if not self.sns_client or not topic_arn:
             return
 
         try:
@@ -465,7 +529,7 @@ El proceso falló Y el sistema de logging a DynamoDB también falló.
             """
 
             self.sns_client.publish(
-                TopicArn=self.sns_topic_arn,
+                TopicArn=topic_arn,
                 Subject=f"🆘 [EMERGENCIA] Sistema de Logging Fallido - {table_name}",
                 Message=emergency_message
             )

@@ -7,6 +7,8 @@ from .monitoring import IMonitor, IEventLogger, INotificationService
 from .storage import IDataWriter
 from .cleanup import ICleanupService, IResourceCleaner
 from .watermark import IWatermarkManager, IWatermarkStorage
+from .secrets import ISecretProvider
+from .factories import IComponentFactory
 
 __all__ = [
     'ICsvLoader',
@@ -22,5 +24,7 @@ __all__ = [
     'IResourceCleaner',
     'IWatermarkManager',
     'IWatermarkStorage',
+    'ISecretProvider',  # ✅ Nueva interfaz
+    'IComponentFactory',  # ✅ Nueva interfaz
 ]
 

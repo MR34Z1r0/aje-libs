@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
-from typing import Dict, Type
+from typing import Dict, Type, Optional, TYPE_CHECKING
 from ..contracts.extractor_interface import IExtractor
-from ..models.database_config import DatabaseConfig
+from ...shared.models import DatabaseConfig  # ✅ Movido a shared/models
 from ..services.extractors.sql_server_extractor import SQLServerExtractor
 from aje_libs.datalake.shared.exceptions import ConfigurationException as ConfigurationError
+
+if TYPE_CHECKING:
+    from ...shared.contracts.secrets import ISecretProvider
 
 class ExtractorFactory:
     """Factory to create appropriate extractor instances"""
@@ -18,7 +21,13 @@ class ExtractorFactory:
     }
     
     @classmethod
-    def create(cls, db_type: str, config: DatabaseConfig, name_logger: str = None) -> IExtractor:
+    def create(
+        cls, 
+        db_type: str, 
+        config: DatabaseConfig, 
+        name_logger: Optional[str] = None,
+        secret_provider: Optional['ISecretProvider'] = None  # ✅ DIP: Nueva dependencia opcional
+    ) -> IExtractor:
         """
         Create appropriate extractor based on database type
         
@@ -43,12 +52,22 @@ class ExtractorFactory:
             )
         
         extractor_class = cls._extractors[db_type_lower]
-        # Pass name_logger if supported by the extractor
+        # ✅ DIP: Pasar secret_provider si está disponible, sino crear uno por defecto dentro del extractor
+        # Intentar pasar ambos parámetros opcionales
         try:
-            return extractor_class(config, name_logger=name_logger)
+            if secret_provider is not None:
+                return extractor_class(config, secret_provider=secret_provider, name_logger=name_logger)
+            else:
+                return extractor_class(config, name_logger=name_logger)
         except TypeError:
-            # Fallback for extractors that do not accept name_logger
-            return extractor_class(config)
+            # Fallback para extractors que no aceptan estos parámetros
+            try:
+                return extractor_class(config)
+            except TypeError:
+                # Último fallback
+                raise ConfigurationError(
+                    f"Extractor '{extractor_class.__name__}' no acepta los parámetros proporcionados"
+                )
     
     @classmethod
     def register_extractor(cls, db_type: str, extractor_class: Type[IExtractor]):

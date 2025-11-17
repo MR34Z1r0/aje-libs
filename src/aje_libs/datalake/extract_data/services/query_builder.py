@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from typing import Optional, Dict, Any
 import re
-from ..models.table_config import TableConfig
+from ...shared.models import TableConfig
 from ..utils.validation_utils import clean_column_name, sanitize_query_parameter
 
 class QueryBuilder:

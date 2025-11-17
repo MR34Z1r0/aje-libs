@@ -14,6 +14,10 @@ class FullLoadStrategy(ExtractionStrategy):
     def get_strategy_type(self) -> ExtractionStrategyType:
         return ExtractionStrategyType.FULL_LOAD
     
+    def get_strategy_name(self) -> str:
+        """Retorna el nombre de la estrategia para logging y registro"""
+        return "full_load"
+    
     def build_extraction_params(self) -> ExtractionParams:
         logger.debug(f"Full Load Strategy - Table: {self.extraction_config.table_name}, Mode: {self.extraction_config.load_mode.value}")
         

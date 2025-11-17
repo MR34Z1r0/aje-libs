@@ -1,27 +1,65 @@
 # load/watermark_storage/dynamodb_watermark_storage.py
 from ....shared.contracts.watermark import IWatermarkStorage
-from aje_libs.common.helpers.dynamodb_helper import DynamoDBHelper
 from ...utils.date_utils import get_current_lima_time
 from ....shared.services.logging import LoggerService
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
 import json
 from datetime import timedelta
+
+# ✅ DIP: Usar interfaz en lugar de implementación concreta
+if TYPE_CHECKING:
+    from ....shared.contracts.data_access import IDatabaseProvider
+else:
+    IDatabaseProvider = None  # Para evitar importación circular
 
 class DynamoDBWatermarkStorage(IWatermarkStorage):
     """Implementación DynamoDB para watermarks"""
     
-    def __init__(self, table_name: str, project_name: str, team: str = '', data_source: str = '', endpoint_name: str = ''):
+    def __init__(
+        self, 
+        table_name: str, 
+        project_name: str, 
+        team: str = '', 
+        data_source: str = '', 
+        endpoint_name: str = '',
+        database_provider: Optional['IDatabaseProvider'] = None,  # ✅ DIP: Usar interfaz
+        region: Optional[str] = None  # ✅ Para crear provider si no se proporciona
+    ):
+        """
+        Inicializa el storage de watermarks de DynamoDB
+        
+        Args:
+            table_name: Nombre de la tabla DynamoDB
+            project_name: Nombre del proyecto
+            team: Nombre del equipo
+            data_source: Fuente de datos
+            endpoint_name: Nombre del endpoint
+            database_provider: Proveedor de base de datos (opcional, se crea si no se proporciona)
+            region: Región de AWS (opcional, solo si se crea provider automáticamente)
+        """
         self.logger = LoggerService.get_logger(__name__)
         self.table_name = table_name
         self.project_name = project_name
         self.team = (team or '').strip()
         self.data_source = (data_source or '').strip()
         self.endpoint_name = (endpoint_name or '').strip()
-        self.dynamo_helper = DynamoDBHelper(
-            table_name=table_name,
-            pk_name="WATERMARK_KEY",
-            sk_name="TIMESTAMP"
-        )
+        
+        # ✅ DIP: Usar interfaz en lugar de implementación concreta
+        # Si no se proporciona database_provider, crear uno por defecto usando factory
+        if database_provider is None:
+            from ....shared.factories import DatabaseProviderFactory
+            self._database_provider = DatabaseProviderFactory.create(
+                provider_type='dynamodb',
+                table_name=table_name,
+                pk_name="WATERMARK_KEY",
+                sk_name="TIMESTAMP",
+                region=region,
+                logger_name=f"{__name__}.database"
+            )
+            self.logger.debug("✅ Database provider creado automáticamente usando factory")
+        else:
+            self._database_provider = database_provider
+            self.logger.debug("✅ Database provider proporcionado externamente")
     
     def _build_watermark_key(self, table_name: str, column_name: str) -> str:
         table_norm = (table_name or '').lower()
@@ -33,8 +71,8 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
         try:
             watermark_key = self._build_watermark_key(table_name, column_name)
             
-            # ✅ CORRECCIÓN: Usar expression attribute values
-            response = self.dynamo_helper.query_table(
+            # ✅ DIP: Usar interfaz IDatabaseProvider
+            response = self._database_provider.query_table(
                 key_condition="WATERMARK_KEY = :pk",
                 expression_attribute_values={':pk': watermark_key},
                 limit=1,
@@ -104,7 +142,8 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
                 'TTL': int((now + timedelta(days=90)).timestamp())
             }
             
-            self.dynamo_helper.put_item(watermark_entry)
+            # ✅ DIP: Usar interfaz IDatabaseProvider
+            self._database_provider.put_item(watermark_entry)
             return True
             
         except Exception as e: 
@@ -118,8 +157,9 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
             watermark_prefix = f"{self.team}#{self.data_source}#{self.endpoint_name}#{(table_name or '').lower()}#"
             
             # Intentar query primero si el patrón lo permite
+            # ✅ DIP: Usar interfaz IDatabaseProvider
             try:
-                response = self.dynamo_helper.query_table(
+                response = self._database_provider.query_table(
                     key_condition="begins_with(WATERMARK_KEY, :prefix)",
                     expression_attribute_values={':prefix': watermark_prefix},
                     limit=limit,
@@ -127,7 +167,7 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
                 )
             except:
                 # Si query falla, usar scan
-                response = self.dynamo_helper.scan_table(
+                response = self._database_provider.scan_table(
                     filter_expression="begins_with(WATERMARK_KEY, :prefix)",
                     expression_attribute_values={':prefix': watermark_prefix},
                     limit=limit
@@ -165,7 +205,8 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
             # ✅ CORRECCIÓN: Usar expression attribute values
             project_prefix = f"{self.team}#{self.data_source}#"
             
-            response = self.dynamo_helper.scan_table(
+            # ✅ DIP: Usar interfaz IDatabaseProvider
+            response = self._database_provider.scan_table(
                 filter_expression="begins_with(WATERMARK_KEY, :prefix)",
                 expression_attribute_values={':prefix': project_prefix},
                 limit=limit
@@ -197,8 +238,8 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
         try:
             watermark_key = self._build_watermark_key(table_name, column_name)
             
-            # Eliminar item específico
-            self.dynamo_helper.delete_item(
+            # Eliminar item específico (✅ DIP: Usar interfaz IDatabaseProvider)
+            self._database_provider.delete_item(
                 partition_key=watermark_key,
                 sort_key=timestamp
             )
@@ -223,7 +264,8 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
             # Obtener el timestamp del último registro
             watermark_key = self._build_watermark_key(table_name, column_name)
             
-            response = self.dynamo_helper.query_table(
+            # ✅ DIP: Usar interfaz IDatabaseProvider
+            response = self._database_provider.query_table(
                 key_condition="WATERMARK_KEY = :pk",
                 expression_attribute_values={':pk': watermark_key},
                 limit=1,
@@ -235,8 +277,8 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
             
             last_timestamp = response[0].get('TIMESTAMP')
             
-            # ✅ CORRECCIÓN: Actualizar con expression attribute values
-            self.dynamo_helper.update_item(
+            # ✅ DIP: Usar interfaz IDatabaseProvider
+            self._database_provider.update_item(
                 partition_key=watermark_key,
                 sort_key=last_timestamp,
                 update_expression="SET METADATA = :metadata",
@@ -289,8 +331,8 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
                 f"📋 Esto buscará TODOS los watermarks con WATERMARK_KEY que comience con: '{watermark_prefix}'"
             )
             
-            # Buscar todos los watermarks con este prefijo
-            watermarks = self.dynamo_helper.scan_table(
+            # Buscar todos los watermarks con este prefijo (✅ DIP: Usar interfaz IDatabaseProvider)
+            watermarks = self._database_provider.scan_table(
                 filter_expression="begins_with(WATERMARK_KEY, :prefix)",
                 expression_attribute_values={':prefix': watermark_prefix},
                 limit=None  # Sin límite para limpiar todo
@@ -310,7 +352,8 @@ class DynamoDBWatermarkStorage(IWatermarkStorage):
                     timestamp = watermark.get('TIMESTAMP')
                     
                     if watermark_key and timestamp:
-                        self.dynamo_helper.delete_item(
+                        # ✅ DIP: Usar interfaz IDatabaseProvider
+                        self._database_provider.delete_item(
                             partition_key=watermark_key,
                             sort_key=timestamp
                         )

@@ -43,6 +43,11 @@ from .exceptions import (
 
 # Exportar utilidades
 from .utils import PartitionFormatter
+# SparkConfigBuilder se importa de forma diferida para evitar requerir pyspark en extract_data
+# from .utils.spark_config_builder import SparkConfigBuilder  # ✅ Builder para configuraciones de Spark (import diferido)
+
+# Exportar builders
+from .builders import DatabaseConfigBuilder
 
 __all__ = [
     # Contratos
@@ -68,6 +73,9 @@ __all__ = [
     'ValidationException', 'EmptyTableException',
     'ConfigurationException',
     'StorageException',
-    # Utilidades
-    'PartitionFormatter'
+           # Utilidades
+           'PartitionFormatter',
+           # 'SparkConfigBuilder',  # ✅ Builder para configuraciones de Spark (import diferido - solo para light_transform)
+    # Builders
+    'DatabaseConfigBuilder',  # ✅ Nuevo builder
 ]

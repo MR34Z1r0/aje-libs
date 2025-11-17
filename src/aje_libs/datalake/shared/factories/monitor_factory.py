@@ -1,15 +1,17 @@
 """
-Factory para crear servicios de monitoreo (OCP)
+Factory para crear servicios de monitoreo (OCP - refactorizado para usar builders)
 """
 from typing import Dict, Type, Optional
 from ..contracts.monitoring import IMonitor, IEventLogger, INotificationService
 from ..contracts.logging import ILogger
-from ..services.monitoring import MonitorService, EventLoggerService, NotificationService
+from ..services.monitoring import MonitorService
 from ..exceptions import ConfigurationException
+from .event_logger_builder import EventLoggerBuilder
+from .notification_service_builder import NotificationServiceBuilder
 
 
 class MonitorFactory:
-    """Factory para crear servicios de monitoreo (OCP - extensible sin modificar)"""
+    """Factory para crear servicios de monitoreo (OCP - extensible sin modificar, SRP - usa builders)"""
     
     _monitor_types: Dict[str, Type[IMonitor]] = {
         'dynamodb': MonitorService,
@@ -26,7 +28,7 @@ class MonitorFactory:
         **config
     ) -> IMonitor:
         """
-        Crea servicio de monitoreo
+        Crea servicio de monitoreo usando builders internos (SRP - delegación de responsabilidades)
         
         Args:
             monitor_type: Tipo de monitor ('dynamodb', 'default')
@@ -34,6 +36,8 @@ class MonitorFactory:
             notification_service: Servicio de notificaciones (opcional)
             logger: Logger para logs internos (opcional)
             **config: Configuración adicional:
+                - event_logger_type: Tipo de event logger ('default', 'extract_data', 'light_transform')
+                - notification_provider: Proveedor de notificaciones ('sns', etc.)
                 - table_name: Nombre de la tabla DynamoDB para logs
                 - project_name: Nombre del proyecto
                 - team: Nombre del equipo
@@ -41,6 +45,7 @@ class MonitorFactory:
                 - endpoint_name: Nombre del endpoint
                 - environment: Ambiente
                 - sns_topic_arn: ARN del topic SNS
+                - sns_topic_arns: Dict con ARNs por tipo de evento
                 - process_guid: GUID del proceso
                 - region: Región AWS (default: us-east-1)
             
@@ -55,43 +60,35 @@ class MonitorFactory:
                 f"Tipo de monitor no soportado '{monitor_type}'. Disponibles: {available}"
             )
         
-        # Si no se proporciona event_logger, crear uno usando DynamoDBLogStorage
+        # ✅ Usar EventLoggerBuilder para crear event_logger (SRP - separación de responsabilidades)
         if event_logger is None:
-            # Intentar importar la implementación específica de extract_data
-            try:
-                from ...extract_data.services.monitoring.extract_data_event_logger_service import ExtractDataEventLoggerService
-                from ...extract_data.services.log_storage.dynamodb_log_storage import DynamoDBLogStorage
-                
-                # Crear DynamoDBLogStorage
-                table_name = config.get('table_name')
-                region = config.get('region', 'us-east-1')
-                
-                if table_name:
-                    log_storage = DynamoDBLogStorage(table_name=table_name, region=region)
-                    
-                    # Crear ExtractDataEventLoggerService
-                    event_logger = ExtractDataEventLoggerService(
-                        log_storage=log_storage,
-                        team=config.get('team', ''),
-                        data_source=config.get('data_source', ''),
-                        endpoint_name=config.get('endpoint_name', ''),
-                        flow_name=config.get('flow_name', 'extract_data'),
-                        environment=config.get('environment', ''),
-                        logger=logger,
-                        process_guid=config.get('process_guid')
-                    )
-                else:
-                    # Fallback a EventLoggerService básico si no hay table_name
-                    event_logger = EventLoggerService(log_storage=None, logger=logger)
-            except ImportError:
-                # Si no se puede importar, usar EventLoggerService básico
-                event_logger = EventLoggerService(log_storage=None, logger=logger)
+            event_logger_type = config.get('event_logger_type', 'default')
+            # Extraer argumentos específicos de config para evitar duplicados
+            event_logger_config = {
+                k: v for k, v in config.items()
+                if k not in ['event_logger_type']
+            }
+            
+            event_logger = EventLoggerBuilder.build(
+                event_logger_type=event_logger_type,
+                logger=logger,
+                **event_logger_config
+            )
         
-        # Si no se proporciona notification_service pero hay config de SNS, crear uno
-        if notification_service is None and config.get('sns_topic_arn'):
-            notification_service = NotificationService(
+        # ✅ Usar NotificationServiceBuilder para crear notification_service (SRP)
+        if notification_service is None:
+            # Extraer argumentos específicos de config para evitar duplicados
+            notification_config = {
+                k: v for k, v in config.items()
+                if k not in ['sns_topic_arn', 'sns_topic_arns', 'notification_provider']
+            }
+            
+            notification_service = NotificationServiceBuilder.build(
+                notification_provider=config.get('notification_provider', 'sns'),
                 sns_topic_arn=config.get('sns_topic_arn'),
-                logger=logger
+                sns_topic_arns=config.get('sns_topic_arns'),
+                logger=logger,
+                **notification_config
             )
         
         monitor_class = cls._monitor_types[monitor_type_lower]

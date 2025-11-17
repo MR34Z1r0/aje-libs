@@ -4,21 +4,59 @@ import uuid
 import time
 from decimal import Decimal
 from datetime import datetime 
-from ...models.file_metadata import FileMetadata
-from typing import List, Optional, Dict, Any
+from ....shared.models import FileMetadata  # ✅ Movido a shared/models
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
 import pandas as pd
 from ...contracts.loader_interface import ILoader
 from aje_libs.datalake.shared.exceptions import StorageException as LoadError
-from aje_libs.common.helpers.s3_helper import S3Helper
+
+# ✅ DIP: Usar interfaz en lugar de implementación concreta
+if TYPE_CHECKING:
+    from ....shared.contracts.storage import IStorageProvider
+else:
+    IStorageProvider = None  # Para evitar importación circular
 
 class S3Loader(ILoader):
     """S3 implementation of LoaderInterface"""
     
-    def __init__(self, bucket_name: str, **kwargs):
+    def __init__(
+        self, 
+        bucket_name: str, 
+        storage_provider: Optional['IStorageProvider'] = None,  # ✅ DIP: Usar interfaz
+        **kwargs
+    ):
+        """
+        Inicializa el loader de S3
+        
+        Args:
+            bucket_name: Nombre del bucket S3
+            storage_provider: Proveedor de almacenamiento (opcional, se crea si no se proporciona)
+            **kwargs: Configuración adicional
+        """
         self.bucket_name = bucket_name
-        self.s3_helper = S3Helper(bucket_name)
         self.region = kwargs.get('region', 'us-east-1')
         self.formatter = None
+        
+        # ✅ DIP: Usar interfaz en lugar de implementación concreta
+        # Si no se proporciona storage_provider, crear uno por defecto usando factory
+        if storage_provider is None:
+            from ....shared.factories import StorageProviderFactory
+            self._storage_provider = StorageProviderFactory.create(
+                provider_type='s3',
+                bucket_name=bucket_name,
+                region=self.region,
+                logger_name=f"{__name__}.storage"
+            )
+            if hasattr(self, '_storage_provider'):
+                from ....shared.services.logging import LoggerService
+                logger = LoggerService.get_logger(__name__)
+                logger.debug("✅ Storage provider creado automáticamente usando factory")
+        else:
+            self._storage_provider = storage_provider
+            if hasattr(self, '_storage_provider'):
+                from ....shared.services.logging import LoggerService
+                logger = LoggerService.get_logger(__name__)
+                logger.debug("✅ Storage provider proporcionado externamente")
     
     def set_formatter(self, formatter):
         """Set the file formatter to use"""
@@ -62,9 +100,9 @@ class S3Loader(ILoader):
             # Build full key
             s3_key = destination_path + filename
             
-            # Upload to S3
+            # Upload to S3 (✅ DIP: Usar interfaz IStorageProvider)
             upload_file_start = time.time()
-            full_s3_path = self.s3_helper.put_object(
+            full_s3_path = self._storage_provider.put_object(
                 object_key=s3_key,
                 body=file_data,
                 extra_args={'ContentType': self.formatter.get_content_type()}
@@ -106,12 +144,12 @@ class S3Loader(ILoader):
             if path.startswith(f"{self.bucket_name}/"):
                 path = path[len(self.bucket_name) + 1:]
             
-            # List objects with prefix
-            objects = self.s3_helper.list_objects(prefix=path)
+            # List objects with prefix (✅ DIP: Usar interfaz IStorageProvider)
+            objects = self._storage_provider.list_objects(prefix=path)
             
             if objects:
                 keys_to_delete = [obj['Key'] for obj in objects]
-                result = self.s3_helper.delete_objects(keys_to_delete)
+                result = self._storage_provider.delete_objects(keys_to_delete)
                 return True
             
             return True  # No objects to delete is considered success
@@ -159,8 +197,8 @@ class S3Loader(ILoader):
             
             logger.debug(f"Limpiando S3 - bucket: {self.bucket_name}, path: {table_path}")
             
-            # Listar todos los objetos con este prefijo
-            objects = self.s3_helper.list_objects(prefix=table_path)
+            # Listar todos los objetos con este prefijo (✅ DIP: Usar interfaz IStorageProvider)
+            objects = self._storage_provider.list_objects(prefix=table_path)
             
             if not objects:
                 logger.debug(f"No se encontraron objetos para limpiar en {table_path}")
@@ -172,8 +210,10 @@ class S3Loader(ILoader):
             keys_to_delete = [obj['Key'] for obj in objects]
             total_objects = len(keys_to_delete)
             
-            # Eliminar objetos en lotes (S3 permite hasta 1000 por batch)
-            batch_size = 1000
+            # ✅ Usar configuración centralizada para batch size
+            from ....shared.config import get_settings
+            settings = get_settings()
+            batch_size = settings.cleanup_batch_size  # S3 permite hasta 1000 por batch
             deleted_count = 0
             batch_errors = []
             
@@ -181,7 +221,7 @@ class S3Loader(ILoader):
                 batch = keys_to_delete[i:i + batch_size]
                 
                 try:
-                    delete_result = self.s3_helper.delete_objects(batch)
+                    delete_result = self._storage_provider.delete_objects(batch)
                     deleted_in_batch = len(delete_result.get('Deleted', []))
                     deleted_count += deleted_in_batch
                     
@@ -231,7 +271,7 @@ class S3Loader(ILoader):
             if path.startswith(f"{self.bucket_name}/"):
                 path = path[len(self.bucket_name) + 1:]
             
-            objects = self.s3_helper.list_objects(prefix=path)
+            objects = self._storage_provider.list_objects(prefix=path)
             return [f"s3://{self.bucket_name}/{obj['Key']}" for obj in objects]
             
         except Exception as e:
@@ -251,11 +291,11 @@ class S3Loader(ILoader):
             # Check if it's a specific object or prefix
             if path.endswith('/'):
                 # It's a prefix, check if any objects exist with this prefix
-                objects = self.s3_helper.list_objects(prefix=path, max_keys=1)
+                objects = self._storage_provider.list_objects(prefix=path, max_keys=1)
                 return len(objects) > 0
             else:
-                # It's a specific object
-                return self.s3_helper.object_exists(path)
+                # It's a specific object (✅ DIP: Usar interfaz IStorageProvider)
+                return self._storage_provider.object_exists(path)
                 
         except Exception:
             return False

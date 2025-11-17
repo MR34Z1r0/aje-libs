@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -6,28 +7,25 @@ from typing import List, Dict, Any, Optional
 import pandas as pd
 
 from ..models.extraction_config import ExtractionConfig
-from ..models.table_config import TableConfig
-from ..models.database_config import DatabaseConfig
 from ..models.extraction_result import ExtractionResult
 from ..contracts.extractor_interface import IExtractor
-from aje_libs.datalake.shared.models import LoadMode 
+from aje_libs.datalake.shared.models import LoadMode, TableConfig, DatabaseConfig  # ✅ DatabaseConfig movido a shared/models 
 from ..contracts.loader_interface import ILoader
 from ...shared.contracts.monitoring import IMonitor
 from ..contracts.strategy_interface import IExtractionStrategy
 from ...shared.contracts.watermark import IWatermarkStorage
-from ..factories.extractor_factory import ExtractorFactory
-from ..factories.loader_factory import LoaderFactory
-from ..factories.watermark_factory import WatermarkStorageFactory
-from ...shared.factories import MonitorFactory
-from ..factories.strategy_factory import StrategyFactory
-from ..factories.configuration_provider_factory import ConfigurationProviderFactory
-from aje_libs.datalake.shared.contracts import IConfigurationProvider
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ...shared.contracts.factories import IComponentFactory  # ✅ Nueva interfaz (import diferido para evitar circular)
+from ...shared.contracts.configuration import IConfigurationProvider
+from ..factories.extraction_component_factory import DefaultComponentFactory  # ✅ Nueva factory
+from ..orchestrators.component_initializer import ComponentInitializer  # ✅ Nuevo inicializador
 from aje_libs.datalake.shared.exceptions import (
     ConfigurationException as ConfigurationError,
     ProcessingError as ExtractionError,
 )
-from aje_libs.datalake.shared.config import settings
 from ...shared.utils.partition_formatter import PartitionFormatter
+from ...shared.builders import DatabaseConfigBuilder  # ✅ Builder para configs
 
 class DataExtractionOrchestrator:
     """Main orchestrator for the data extraction process"""
@@ -38,12 +36,16 @@ class DataExtractionOrchestrator:
         monitor: IMonitor = None,
         process_guid: str = None,
         configuration_provider: IConfigurationProvider = None,
+               component_factory: Optional['IComponentFactory'] = None,  # ✅ Nueva inyección de dependencias
     ):
         self.extraction_config = extraction_config
         self.monitor = monitor  # Recibir monitor desde main
         self.process_guid = process_guid
         self.table_config: Optional[TableConfig] = None
         self.database_config: Optional[DatabaseConfig] = None
+        
+        # ✅ Inyección de dependencias: usar factory proporcionado o crear uno por defecto
+        self.component_factory = component_factory or DefaultComponentFactory(name_logger=f"{__name__}.factory")
         
         # Inicializar logger - AGREGAR ESTA LÍNEA
         from ...shared.services.logging import LoggerService
@@ -93,11 +95,7 @@ class DataExtractionOrchestrator:
                     )
                     self.logger.error(error_msg)
                     self.logger.warning("Continuando con extracción después de errores en cleanup")
-                else:
-                    # Solo mostrar si se eliminaron items
-                    items_deleted = cleanup_result.get('total_items_deleted', 0)
-                    if items_deleted > 0:
-                        self.logger.info(f"✅ Limpieza RESET completada - {items_deleted} items eliminados")
+                # El log de éxito ya se muestra en _execute_reset_cleanup(), no duplicar aquí
             
             # ✅ Log start DESPUÉS de que el cleanup se complete (en modo RESET)
             # o inmediatamente (en otros modos)
@@ -203,69 +201,32 @@ class DataExtractionOrchestrator:
             self._cleanup()
     
     def _initialize_components(self):
-        """Initialize all components needed for extraction"""
-
-        if not self.configuration_provider:
-            self.configuration_provider = ConfigurationProviderFactory.create(
-                self.extraction_config.config_source_type,
-                logger=self.logger
-            )
-
-        # Load configurations
-        self._load_configurations()
-        
-        # Create extractor
-        self.extractor = ExtractorFactory.create(
-            db_type=self.database_config.db_type,
-            config=self.database_config,
-            name_logger=self.name_logger
+        """
+        Initialize all components needed for extraction (SRP - delega a ComponentInitializer)
+        """
+        # ✅ Usar ComponentInitializer para inicializar componentes (SRP - separación de responsabilidades)
+        initializer = ComponentInitializer(
+            config=self.extraction_config,
+            component_factory=self.component_factory,
+            logger=self.logger
         )
         
-        # Test database connection
-        if not self.extractor.test_connection():
-            raise ConnectionError("Failed to connect to database")
-        
-        # 🎯 SOLO CREAR WATERMARK STORAGE SI ES NECESARIO
-        watermark_config = self._build_watermark_storage_config()
-        
-        # Determinar si la estrategia necesita watermarks
-        strategy_needs_watermark = self._strategy_needs_watermark_storage()
-        
-        if strategy_needs_watermark:
-            self.watermark_storage = WatermarkStorageFactory.create(
-                storage_type=settings.get('WATERMARK_STORAGE_TYPE', 'dynamodb'),
-                **watermark_config
-            )
-            self.logger.info(f"Watermark storage initialized: {type(self.watermark_storage).__name__}")
-        else:
-            self.watermark_storage = None
-            self.logger.debug("Watermark storage not needed for this strategy")
-
-        # Create loader
-        loader_config = self._build_loader_config()
-        self.loader = LoaderFactory.create(
-            loader_type=self.extraction_config.loader_type,
-            output_format=self.extraction_config.formatter_type,
-            **loader_config
+        # Inicializar todos los componentes
+        components = initializer.initialize_all(
+            configuration_provider=self.configuration_provider,
+            monitor=self.monitor,
+            process_guid=self.process_guid
         )
         
-        if not self.monitor:
-            self.monitor = MonitorFactory.create(
-                'dynamodb',
-                table_name=self.extraction_config.dynamo_logs_table,
-                project_name=self.extraction_config.data_source,
-                team=self.extraction_config.team,
-                data_source=self.extraction_config.data_source,
-                endpoint_name=self.extraction_config.endpoint_name,
-                environment=self.extraction_config.environment,
-                sns_topic_arn=self.extraction_config.topic_arn
-            )
-        
-        self.strategy = StrategyFactory.create(
-            table_config=self.table_config,
-            extraction_config=self.extraction_config,
-            watermark_storage=self.watermark_storage  # 👈 AQUÍ SE PASA
-        ) 
+        # Asignar componentes inicializados
+        self.extractor = components['extractor']
+        self.loader = components['loader']
+        self.monitor = components['monitor'] or self.monitor  # Mantener el monitor proporcionado si existe
+        self.watermark_storage = components['watermark_storage']
+        self.strategy = components['strategy']
+        self.configuration_provider = components['configuration_provider']
+        self.table_config = components['table_config']
+        self.database_config = components['database_config'] 
     
     def _strategy_needs_watermark_storage(self) -> bool:
         """Determina si la estrategia necesita watermark storage"""
@@ -290,18 +251,35 @@ class DataExtractionOrchestrator:
     def _load_configurations(self):
         """Load table and database configurations from the provider"""
         try:
-            tables_source = self.extraction_config.tables_config_source or settings.get('tables')
-            credentials_source = self.extraction_config.credentials_config_source or settings.get('credentials')
-            columns_source = self.extraction_config.columns_config_source or settings.get('columns')
+            # Usar config_sources (Dict[str, ResourceRef])
+            tables_ref = self.extraction_config.config_sources.get("tables") if self.extraction_config.config_sources else None
+            credentials_ref = self.extraction_config.config_sources.get("credentials") if self.extraction_config.config_sources else None
+            columns_ref = self.extraction_config.config_sources.get("columns") if self.extraction_config.config_sources else None
+            
+            # Usar config_sources de ExtractionConfig, sin fallback a variables de entorno
+            if not tables_ref:
+                raise ConfigurationError(
+                    "config_sources['tables'] debe estar configurado en ExtractionConfig. "
+                    "No se pueden usar variables de entorno como fallback."
+                )
+            tables_source = tables_ref.location
+            
+            credentials_source = credentials_ref.location if credentials_ref else None
+            columns_source = columns_ref.location if columns_ref else None
 
+            self.logger.debug(f"📂 Cargando configuración de tabla desde: {tables_source}")
             table_row = self.configuration_provider.get_table_config(
                 self.extraction_config.table_name, tables_source
             )
+            
+            self.logger.debug(f"🔐 Cargando configuración de endpoint desde: {credentials_source}")
             db_row = self.configuration_provider.get_endpoint_config(
                 self.extraction_config.endpoint_name,
                 credentials_source,
                 ENV=self.extraction_config.environment,
             )
+            
+            self.logger.debug(f"📊 Cargando metadata de columnas desde: {columns_source}")
             columns_data = self.configuration_provider.get_columns_metadata(
                 self.extraction_config.table_name,
                 columns_source,
@@ -309,16 +287,20 @@ class DataExtractionOrchestrator:
 
             self.table_config = self._build_table_config(table_row)
             self.database_config = self._build_database_config(db_row)
+            
+            self.logger.debug(f"✅ Tabla configurada: {self.table_config.source_schema}.{self.table_config.source_table}")
+            self.logger.debug(f"✅ Endpoint configurado: {self.database_config.endpoint_name} ({self.database_config.db_type})")
 
             if self.table_config and hasattr(self.table_config, 'partition_format'):
                 partition_format = self.table_config.partition_format
                 self.partition_formatter = PartitionFormatter(partition_format)
-                self.logger.debug(f"Formato de partición cargado: {partition_format}")
+                self.logger.debug(f"📅 Formato de partición cargado: {partition_format}")
             else:
                 self.partition_formatter = PartitionFormatter()
-                self.logger.info("Using default partition format")
+                self.logger.debug("📅 Usando formato de partición por defecto")
 
         except Exception as e:
+            self.logger.error(f"❌ Error cargando configuraciones: {e}", exc_info=True)
             raise ConfigurationError(f"Failed to load configurations: {e}")
     
     def _build_table_config(self, table_row: Dict[str, Any]) -> TableConfig:
@@ -354,44 +336,72 @@ class DataExtractionOrchestrator:
         )
     
     def _build_database_config(self, db_row: Dict[str, Any]) -> DatabaseConfig:
-        """Build DatabaseConfig from CSV row"""
-    
+        """
+        Build DatabaseConfig from CSV row (usando Builder Pattern)
+        
+        Args:
+            db_row: Diccionario con los datos de la fila CSV
+            
+        Returns:
+            DatabaseConfig configurada
+        """
         # Construir el nombre del secreto basado en la configuración de extracción
         secret_name = f"{self.extraction_config.environment.lower()}/{self.extraction_config.project_name}/{self.extraction_config.team}/{self.extraction_config.data_source}"
         
-        return DatabaseConfig(
-            endpoint_name=db_row.get('ENDPOINT_NAME', ''),
-            db_type=db_row.get('BD_TYPE', ''),
-            server=db_row.get('SRC_SERVER_NAME', ''),
-            database=db_row.get('SRC_DB_NAME', ''),
-            username=db_row.get('SRC_DB_USERNAME', ''),
-            secret_key=db_row.get('SRC_DB_SECRET', ''),
-            port=int(db_row.get('DB_PORT_NUMBER')) if db_row.get('DB_PORT_NUMBER') else None,
-            secret_name=secret_name
-        )
+        # ✅ Usar DatabaseConfigBuilder para construcción más clara y mantenible
+        builder = DatabaseConfigBuilder.create()
+        
+        # Mapear campos del CSV al builder
+        db_row_mapped = {
+            'ENDPOINT_NAME': db_row.get('ENDPOINT_NAME', ''),
+            'BD_TYPE': db_row.get('BD_TYPE', ''),
+            'SRC_SERVER_NAME': db_row.get('SRC_SERVER_NAME', ''),
+            'SRC_DB_NAME': db_row.get('SRC_DB_NAME', ''),
+            'SRC_DB_USERNAME': db_row.get('SRC_DB_USERNAME', ''),
+            'SRC_DB_SECRET': db_row.get('SRC_DB_SECRET', ''),
+            'DB_PORT_NUMBER': db_row.get('DB_PORT_NUMBER'),
+            'SECRET_NAME': secret_name,
+            'SECRET_KEY': db_row.get('SRC_DB_SECRET', ''),
+        }
+        
+        return builder.from_dict(db_row_mapped).build()
     
-    def _build_watermark_storage_config(self) -> Dict[str, Any]:
-        """Build watermark storage configuration"""
-        storage_type = settings.get('WATERMARK_STORAGE_TYPE', 'dynamodb')
+    def _build_watermark_storage_config(self) -> Optional[Dict[str, Any]]:
+        """
+        Build watermark storage configuration from ExtractionConfig.
+        Usa watermark_storage ResourceRef si está disponible, de lo contrario retorna None.
+        """
+        if not self.extraction_config.watermark_storage:
+            return None
+        
+        watermark_ref = self.extraction_config.watermark_storage
+        storage_type = watermark_ref.provider.lower()
+        
+        config = {
+            'storage_type': storage_type,
+            'project_name': self.extraction_config.project_name,
+            'team': self.extraction_config.team,
+            'data_source': self.extraction_config.data_source,
+            'endpoint_name': self.database_config.endpoint_name if hasattr(self, 'database_config') and self.database_config else ''
+        }
         
         if storage_type == 'dynamodb':
-            return {
-                'table_name': settings.get('WATERMARK_TABLE', 'extraction-watermarks'),
-                'project_name': self.extraction_config.project_name,
-                'team': self.extraction_config.team,
-                'data_source': self.extraction_config.data_source,
-                'endpoint_name': self.database_config.endpoint_name if hasattr(self, 'database_config') and self.database_config else ''
-            }
+            # Para DynamoDB, la location es el nombre de la tabla
+            config['table_name'] = watermark_ref.location or 'extraction-watermarks'
+            # Agregar opciones si existen
+            config.update(watermark_ref.options)
         elif storage_type == 'csv':
-            return {
-                'csv_file_path': settings.get('WATERMARK_CSV_PATH', './data/watermarks.csv'),
-                'project_name': self.extraction_config.project_name,
-                'team': self.extraction_config.team,
-                'data_source': self.extraction_config.data_source,
-                'endpoint_name': self.database_config.endpoint_name if hasattr(self, 'database_config') and self.database_config else ''
-            }
+            # Para CSV, la location es la ruta del archivo
+            config['csv_file_path'] = watermark_ref.location or './data/watermarks.csv'
+            # Agregar opciones si existen
+            config.update(watermark_ref.options)
+        else:
+            # Para otros tipos, usar location y options directamente
+            if watermark_ref.location:
+                config['location'] = watermark_ref.location
+            config.update(watermark_ref.options)
         
-        return {}
+        return config
     
     def _process_columns_field(self, columns_str: str) -> str:
         """Process columns field to handle SQL Server identifier issues"""
@@ -412,24 +422,47 @@ class DataExtractionOrchestrator:
         return clean_columns
     
     def _build_loader_config(self) -> Dict[str, Any]:
-        """Build loader configuration"""
+        """Build loader configuration from ExtractionConfig"""
         config = {}
         
-        if (self.extraction_config.loader_type or 's3').lower() == 's3':
-            config['bucket_name'] = settings.get('raw_bucket')
-            config['region'] = settings.get('region')
+        if self.extraction_config.raw_storage:
+            config['bucket_name'] = self.extraction_config.raw_storage.location
+            config['region'] = self.extraction_config.raw_storage.options.get('region')
+            # Agregar configuración adicional si existe
+            config.update(self.extraction_config.raw_storage.options)
+        else:
+            # Si no hay raw_storage config, lanzar error en lugar de usar fallback a variables de entorno
+            raise ConfigurationError(
+                "raw_storage debe estar configurado en ExtractionConfig. "
+                "No se pueden usar variables de entorno como fallback."
+            )
         
         return config
     
     def _build_monitor_config(self) -> Dict[str, Any]:
-        """Build monitor configuration"""
+        """
+        Build monitor configuration from ExtractionConfig.
+        Este método ya no es necesario porque el monitor se crea directamente desde ExtractionConfig,
+        pero lo mantenemos por compatibilidad si se usa en otros lugares.
+        """
         config = {}
-        monitor_type = (self.extraction_config.monitor_type or settings.get('monitor_type', 'dynamodb')).lower()
-
-        if monitor_type == 'dynamodb':
-            config['table_name'] = self.extraction_config.dynamo_logs_table or settings.get('logs_table')
+        
+        if self.extraction_config.monitoring:
+            config['monitor_type'] = self.extraction_config.monitoring.provider.lower()
+            config['table_name'] = self.extraction_config.monitoring.location
             config['project_name'] = self.extraction_config.project_name
-            config['sns_topic_arn'] = self.extraction_config.topic_arn or settings.get('TOPIC_ARN')
+            # ✅ Obtener ARN de 'failed' desde notification_targets o notification_target (compatibilidad)
+            if self.extraction_config.notification_targets:
+                failed_target = self.extraction_config.notification_targets.get('failed')
+                config['sns_topic_arn'] = failed_target.location if failed_target else None
+            elif self.extraction_config.notification_target:
+                config['sns_topic_arn'] = self.extraction_config.notification_target.location
+            else:
+                config['sns_topic_arn'] = None
+        else:
+            # Si no hay monitoring config, no podemos crear un monitor válido
+            # Esto es manejado en _initialize_components donde se verifica si hay monitor
+            pass
 
         return config
     

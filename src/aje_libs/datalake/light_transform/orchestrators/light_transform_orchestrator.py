@@ -25,13 +25,17 @@ from aje_libs.datalake.shared.exceptions import (
 )
 from aje_libs.datalake.light_transform.factories import (
     LightTransformConfigFactory,
-    LightTransformProcessorFactory,
+    DefaultLightTransformComponentFactory,  # ✅ Nueva factory
 )
 from aje_libs.datalake.light_transform.models import LightTransformConfig
 from aje_libs.datalake.light_transform.services import DataLakeLogger
-from aje_libs.datalake.shared.factories import MonitorFactory
+from aje_libs.datalake.light_transform.contracts.factories import ILightTransformComponentFactory  # ✅ Nueva interfaz
+from aje_libs.datalake.light_transform.contracts.data_processing import ILightTransformProcessor  # ✅ Importar interfaz
+from aje_libs.datalake.light_transform.orchestrators.component_initializer import ComponentInitializer  # ✅ Nuevo inicializador
 from aje_libs.datalake.shared.contracts.monitoring import IMonitor
 from aje_libs.datalake.shared.services.logging import LoggerService
+# Importar SparkConfigBuilder directamente (no desde shared.__init__ para evitar requerir pyspark en extract_data)
+from aje_libs.datalake.shared.utils.spark_config_builder import SparkConfigBuilder  # ✅ Builder para configs de Spark
 
 TZ_LIMA = pytz.timezone('America/Lima')
 
@@ -59,7 +63,10 @@ class LightTransformOrchestrator:
         'watermarks_table'
     ]
 
-    def __init__(self):
+    def __init__(
+        self,
+        component_factory: Optional[ILightTransformComponentFactory] = None,  # ✅ Nueva inyección de dependencias
+    ):
         self.logger = None
         self.monitor: Optional[IMonitor] = None
         self.spark: Optional[SparkSession] = None
@@ -70,6 +77,11 @@ class LightTransformOrchestrator:
         self.last_status: str = "idle"
         self.last_error_type: Optional[str] = None
         self.last_error_message: Optional[str] = None
+        
+        # ✅ Inyección de dependencias: usar factory proporcionado o crear uno por defecto
+        self.component_factory = component_factory or DefaultLightTransformComponentFactory(
+            logger_name=f"{__name__}.factory"
+        )
 
     def parse_arguments(self, argv: Any) -> dict:
         args = getResolvedOptions(argv, self.REQUIRED_ARGS)
@@ -114,27 +126,13 @@ class LightTransformOrchestrator:
         self.logger.info(f"🆔 Process GUID generado: {self.process_guid}")
 
     def initialize_monitoring(self, config: LightTransformConfig) -> None:
-        log_storage = config.log_storage
-        notification = config.notification_target
-        table_name = None
-        if log_storage and log_storage.provider == 'dynamodb':
-            table_name = log_storage.location
-        sns_topic = None
-        if notification and notification.provider == 'sns':
-            sns_topic = notification.location
-
-        self.monitor = MonitorFactory.create(
-            monitor_type=config.monitor_type,
-            logger=self.logger,
-            table_name=table_name,
-            project_name=config.project_name,
-            team=config.team,
-            data_source=config.data_source,
-            endpoint_name=config.endpoint_name,
-            environment=config.environment,
-            sns_topic_arn=sns_topic,
-            process_guid=self.process_guid,
-            flow_name='light_transform'
+        """
+        Inicializa el monitor usando el component factory (DIP - inyección de dependencias)
+        """
+        # ✅ Usar component factory para crear monitor (SRP - delegación de responsabilidades)
+        self.monitor = self.component_factory.create_monitor(
+            config=config,
+            process_guid=self.process_guid
         )
 
     def log_start(self, config: LightTransformConfig) -> None:
@@ -177,31 +175,35 @@ class LightTransformOrchestrator:
             f"endpoint: {config.endpoint_name} process_id: {self.process_id}"
         )
 
-    def initialize_spark(self) -> None:
-        self.spark = SparkSession.builder \
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-            .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-            .config("spark.databricks.delta.retentionDurationCheck.enabled", "false") \
-            .config("spark.databricks.delta.schema.autoMerge.enabled", "true") \
-            .config("spark.sql.adaptive.enabled", "true") \
-            .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
-            .config("spark.sql.adaptive.skewJoin.enabled", "true") \
-            .config("spark.sql.adaptive.localShuffleReader.enabled", "true") \
-            .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
-            .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
-            .getOrCreate()
+    def initialize_spark(self, table_format: str = 'delta') -> None:
+        """
+        Inicializa SparkSession con configuraciones específicas según el formato de tabla (OCP - extensible)
+        
+        Args:
+            table_format: Formato de tabla ('delta', 'iceberg', etc.) - por defecto 'delta'
+        """
+        # ✅ Usar SparkConfigBuilder para configurar según el formato (OCP - extensible sin modificar)
+        spark_builder = SparkConfigBuilder.configure_for_format(
+            spark_builder=SparkSession.builder,
+            table_format=table_format,
+            logger=self.logger
+        )
+        
+        self.spark = spark_builder.getOrCreate()
 
+        # Configuraciones adicionales comunes
         self.spark.sparkContext._jsc.hadoopConfiguration().set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         self.spark.sparkContext._jsc.hadoopConfiguration().set("mapreduce.fileoutputcommitter.marksuccessfuljobs", "false")
 
-    def build_processor(self, config: LightTransformConfig) -> LightTransformProcessorFactory:
-        return LightTransformProcessorFactory(
+    def build_processor(self, config: LightTransformConfig) -> ILightTransformProcessor:
+        """
+        Construye el procesador usando el component factory (DIP - inyección de dependencias)
+        """
+        # ✅ Usar component factory para crear processor (SRP - delegación de responsabilidades)
+        return self.component_factory.create_processor(
+            config=config,
             spark=self.spark,
-            s3_client=self.s3_client,
-            logger=self.logger,
-            config_source_type=config.config_source_type,
-            data_loader_type=config.data_loader_type,
-            data_writer_type=config.data_writer_type,
+            s3_client=self.s3_client
         )
 
     def finalize_success(self, config: LightTransformConfig) -> None:
@@ -289,6 +291,9 @@ class LightTransformOrchestrator:
             self.spark.stop()
 
     def run_with_config(self, config: LightTransformConfig, log_level: str = 'INFO') -> None:
+        """
+        Ejecuta el proceso de light transform con la configuración proporcionada (SRP - usa ComponentInitializer)
+        """
         self.process_guid = str(uuid.uuid4())
         self.start_time = dt.datetime.now()
         self.logger = None
@@ -296,15 +301,40 @@ class LightTransformOrchestrator:
         self.last_error_type = None
         self.last_error_message = None
         try:
+            # 1. Inicializar logging
             self.initialize_logging(config, log_level)
-            self.initialize_monitoring(config)
-            self.log_start(config)
-
-            self.initialize_spark()
+            
+            # 2. Inicializar Spark y S3 client (usar formato del config)
+            table_format = config.data_writer_type if hasattr(config, 'data_writer_type') else 'delta'
+            self.initialize_spark(table_format=table_format)
             self.s3_client = boto3.client('s3')
-            processor_factory = self.build_processor(config)
-            processor = processor_factory.create()
+            
+            # 3. ✅ Usar ComponentInitializer para inicializar componentes (SRP - separación de responsabilidades)
+            initializer = ComponentInitializer(
+                config=config,
+                component_factory=self.component_factory,
+                spark=self.spark,
+                s3_client=self.s3_client,
+                logger=self.logger
+            )
+            
+            # Inicializar todos los componentes
+            components = initializer.initialize_all(
+                monitor=None,  # Se creará automáticamente si hay config
+                process_guid=self.process_guid
+            )
+            
+            # Asignar componentes inicializados
+            processor = components['processor']
+            self.monitor = components['monitor'] or self.monitor
+            
+            # 4. Log start
+            self.log_start(config)
+            
+            # 5. Procesar tabla
             processor.process_table(config)
+            
+            # 6. Finalizar con éxito
             self.finalize_success(config)
 
         except TransformationWarningException as warning_exc:

@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 from .extraction_params import ExtractionParams
 from .strategy_types import ExtractionStrategyType
-from ...models.table_config import TableConfig
+from ....shared.models import TableConfig
 from ...models.extraction_config import ExtractionConfig
 from ....shared.contracts.watermark import IWatermarkStorage
 
@@ -53,7 +53,7 @@ class ExtractionStrategy(ABC):
     
     # Métodos helper comunes
     def _parse_columns(self) -> List[str]:
-        """Parse column string into list"""
+        """Parse column string or list into list"""
         columns = []
         
         # 1. Procesar ID_COLUMN primero si existe
@@ -62,15 +62,26 @@ class ExtractionStrategy(ABC):
             columns.append(id_column_processed)
         
         # 2. Procesar las columnas regulares
-        if not self.table_config.columns or self.table_config.columns.strip() == '':
-            if not id_column_processed:  # Solo agregar '*' si no hay ID_COLUMN
-                columns.append('*')
+        # Manejar tanto lista como string
+        if isinstance(self.table_config.columns, list):
+            # Si ya es una lista, usar directamente
+            for col in self.table_config.columns:
+                if col and col.strip():
+                    columns.append(col.strip())
+        elif isinstance(self.table_config.columns, str):
+            # Si es string, separar por comas
+            if self.table_config.columns.strip() == '':
+                if not id_column_processed:  # Solo agregar '*' si no hay ID_COLUMN
+                    columns.append('*')
+            else:
+                for col in self.table_config.columns.split(','):
+                    clean_col = col.strip()
+                    if clean_col:
+                        columns.append(clean_col)
         else:
-            # Limpiar y separar columnas
-            for col in self.table_config.columns.split(','):
-                clean_col = col.strip()
-                if clean_col:
-                    columns.append(clean_col)
+            # Si está vacío o es None, usar '*'
+            if not id_column_processed:
+                columns.append('*')
         
         return columns if columns else ['*']
     
@@ -92,24 +103,32 @@ class ExtractionStrategy(ABC):
         return f"{id_column} as id"
 
     def _check_id_exists_in_columns(self) -> bool:
-        """Check if 'id' keyword exists in columns string"""
+        """Check if 'id' keyword exists in columns (string or list)"""
         if not self.table_config.columns:
             return False
         
         import re
         
-        # Normalizar el string de columnas
-        columns_str = self.table_config.columns.lower().strip()
-        
-        # Patrones para detectar 'id' como columna independiente
-        id_patterns = [
-            r'^\s*id\s*$',           # Solo 'id'
-        ]
-        
-        # Verificar cada patrón
-        for pattern in id_patterns:
-            if re.search(pattern, columns_str):
-                return True
+        # Manejar tanto lista como string
+        if isinstance(self.table_config.columns, list):
+            # Si es lista, buscar 'id' directamente
+            for col in self.table_config.columns:
+                if col and col.strip().lower() == 'id':
+                    return True
+            return False
+        elif isinstance(self.table_config.columns, str):
+            # Si es string, usar regex como antes
+            columns_str = self.table_config.columns.lower().strip()
+            
+            # Patrones para detectar 'id' como columna independiente
+            id_patterns = [
+                r'^\s*id\s*$',           # Solo 'id'
+            ]
+            
+            # Verificar cada patrón
+            for pattern in id_patterns:
+                if re.search(pattern, columns_str):
+                    return True
         
         return False
 

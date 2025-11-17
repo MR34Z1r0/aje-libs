@@ -6,7 +6,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, List, Tuple
 
-from aje_libs.datalake.light_transform.models import ColumnMetadata
+from aje_libs.datalake.shared.models import ColumnMetadata  # ✅ Movido a shared/models
 
 
 class ITransformationEngine(ABC):

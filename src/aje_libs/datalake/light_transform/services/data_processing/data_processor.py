@@ -7,11 +7,14 @@ import datetime as dt
 from typing import Any, Dict, List, Optional
 
 import pytz
-from delta.tables import DeltaTable
 
 from aje_libs.datalake.light_transform.contracts.configuration import IConfigurationProvider, ILightTransformConfig
 from aje_libs.datalake.light_transform.contracts.data_processing import IDataLoader, ILightTransformProcessor
 from aje_libs.datalake.light_transform.contracts.storage import IDataWriter
+from aje_libs.datalake.light_transform.contracts.storage.write_strategy_interface import IWriteStrategy  # ✅ Nueva interfaz
+from aje_libs.datalake.light_transform.strategies import WriteStrategyFactory  # ✅ Factory de estrategias
+from aje_libs.datalake.light_transform.strategies.write_strategy_validator import WriteStrategyValidator  # ✅ Validador de estrategias
+from aje_libs.datalake.light_transform.utils.table_existence_checker import TableExistenceChecker  # ✅ Checker agnóstico
 from aje_libs.datalake.shared.exceptions import (
     ConfigurationException as ConfigurationError,
     DataValidationError as DataValidationException,
@@ -19,7 +22,7 @@ from aje_libs.datalake.shared.exceptions import (
     ProcessingError,
     WatermarkError,
 )
-from aje_libs.datalake.light_transform.models import ColumnMetadata, TableConfig, EndpointConfig
+from aje_libs.datalake.shared.models import ColumnMetadata, TableConfig, EndpointConfig  # ✅ Movidos a shared/models
 from aje_libs.datalake.light_transform.services.logging.datalake_logger import DataLakeLogger, DynamoDBLogger
 from aje_libs.datalake.light_transform.services.watermark.dynamodb_watermark_helper import DynamoDBWatermarkHelper
 from aje_libs.datalake.shared.models import LoadMode
@@ -29,7 +32,10 @@ TZ_LIMA = pytz.timezone('America/Lima')
 
 
 class DataProcessor(ILightTransformProcessor):
-    """Procesador principal de datos optimizado con logging integrado"""
+    """
+    Procesador principal de datos optimizado con logging integrado.
+    Utiliza estrategias de escritura modulares según load_type (SRP, OCP).
+    """
 
     def __init__(
         self,
@@ -39,6 +45,7 @@ class DataProcessor(ILightTransformProcessor):
         data_loader: IDataLoader,
         data_writer: IDataWriter,
         logger=None,
+        table_format: str = 'delta',  # ✅ Formato de tabla para existencia checks
     ):
         self.spark = spark
         self.configuration_provider = configuration_provider
@@ -46,6 +53,8 @@ class DataProcessor(ILightTransformProcessor):
         self.data_loader = data_loader
         self.data_writer = data_writer
         self.logger = logger or DataLakeLogger.get_logger(__name__)
+        self.table_format = table_format  # ✅ Formato de tabla (delta, iceberg, etc.)
+        self.strategy_validator = WriteStrategyValidator(logger=self.logger)  # ✅ Validador de estrategias
 
     def process_table(self, config: ILightTransformConfig):
         table_name = config.table_name
@@ -102,59 +111,19 @@ class DataProcessor(ILightTransformProcessor):
 
         self.logger.info(f"🎯 Aplicando reglas de negocio - load_type: {load_type}, load_mode: {load_mode.value}")
 
-        if load_mode in [LoadMode.INITIAL, LoadMode.RESET]:
-            self.logger.info(f"🆕 LOAD_MODE={load_mode.value} detectado - usando OVERWRITE")
-            self.data_writer.overwrite(
-                df=df_processed,
-                path=destination_path,
-                partition_cols=partition_cols,
-            )
+        # ✅ Determinar estrategia de escritura usando WriteStrategyFactory (SRP, OCP)
+        write_strategy = self._determine_write_strategy(load_type, load_mode)
+        self.logger.info(f"📋 Estrategia seleccionada: {write_strategy.get_strategy_name()}")
 
-        elif load_type == 'incremental':
-            id_columns = [col.name for col in columns_metadata if col.is_id]
-            if id_columns and DeltaTable.isDeltaTable(self.spark, destination_path):
-                self.logger.info(f"🔄 Incremental MERGE usando columnas ID: {id_columns}")
-                merge_condition = " AND ".join([f"old.{col} = new.{col}" for col in id_columns])
-                self.data_writer.merge(
-                    df=df_processed,
-                    path=destination_path,
-                    merge_condition=merge_condition,
-                    partition_cols=partition_cols
-                )
-            else:
-                self.logger.info("📝 Incremental APPEND (primera carga o sin columnas ID)")
-                self.data_writer.append(
-                    df=df_processed,
-                    path=destination_path,
-                    partition_cols=partition_cols,
-                )
-
-        elif load_type in ['time_range', 'between-date']:
-            period_column = self._find_process_period_column(columns_metadata)
-            if period_column:
-                periods = [row[period_column] for row in df_processed.select(period_column).distinct().collect()]
-                self.logger.info(f"⏰ TIME_RANGE: DELETE + APPEND - columna: {period_column}, períodos: {periods}")
-                self.data_writer.write_time_range(
-                    df=df_processed,
-                    path=destination_path,
-                    partition_cols=partition_cols,
-                    time_range_config={'period_column': period_column, 'period_values': periods}
-                )
-            else:
-                self.logger.warning("⚠️ TIME_RANGE sin columna de período - usando APPEND")
-                self.data_writer.append(
-                    df=df_processed,
-                    path=destination_path,
-                    partition_cols=partition_cols,
-                )
-
-        else:
-            self.logger.info("📦 Full load OVERWRITE")
-            self.data_writer.overwrite(
-                df=df_processed,
-                path=destination_path,
-                partition_cols=partition_cols,
-            )
+        # ✅ Ejecutar estrategia de escritura con parámetros apropiados
+        self._execute_write_strategy(
+            write_strategy=write_strategy,
+            df=df_processed,
+            path=destination_path,
+            partition_cols=partition_cols,
+            columns_metadata=columns_metadata,
+            table_config=table_config
+        )
 
         self.logger.info("✅ Procesamiento completado")
 
@@ -326,6 +295,16 @@ class DataProcessor(ILightTransformProcessor):
             return
 
         try:
+            # ✅ Extraer múltiples notification ARNs desde notification_targets
+            sns_topic_arns = {}
+            if config.notification_targets:
+                for event_type, target in config.notification_targets.items():
+                    if target and target.provider == 'sns' and target.location:
+                        sns_topic_arns[event_type] = target.location
+            # ⚠️ Compatibilidad hacia atrás: Si notification_targets está vacío, usar notification_target
+            elif config.notification_target and config.notification_target.provider == 'sns':
+                sns_topic_arns['failed'] = config.notification_target.location
+            
             dynamo_logger = DynamoDBLogger(
                 table_name=log_storage.location,
                 team=config.team,
@@ -333,7 +312,8 @@ class DataProcessor(ILightTransformProcessor):
                 endpoint_name=config.endpoint_name,
                 flow_name='light_transform',
                 environment=config.environment,
-                sns_topic_arn=None,
+                sns_topic_arn=None,  # ⚠️ DEPRECATED: Usar sns_topic_arns
+                sns_topic_arns=sns_topic_arns if sns_topic_arns else None,  # ✅ Pasar múltiples ARNs
             )
             deleted = dynamo_logger.delete_logs(table_name=config.table_name)
             self.logger.info(
@@ -503,6 +483,130 @@ class DataProcessor(ILightTransformProcessor):
 
         self.logger.warning("⚠️ No se encontró columna de partición para watermark")
         return None
+    
+    def _determine_write_strategy(self, load_type: str, load_mode: LoadMode) -> IWriteStrategy:
+        """
+        Determina la estrategia de escritura según load_type y load_mode (SRP, OCP)
+        
+        Args:
+            load_type: Tipo de carga de la tabla ('full', 'incremental', 'time_range', etc.)
+            load_mode: Modo de carga (INITIAL, RESET, NORMAL, REPROCESS)
+            
+        Returns:
+            Instancia de IWriteStrategy apropiada
+        """
+        # Si load_mode es INITIAL o RESET, siempre usar OVERWRITE (full load)
+        if load_mode in [LoadMode.INITIAL, LoadMode.RESET]:
+            self.logger.info(f"🆕 LOAD_MODE={load_mode.value} detectado - usando estrategia FullLoad (OVERWRITE)")
+            return WriteStrategyFactory.create('full')
+        
+        # Para otros modos, usar estrategia según load_type
+        return WriteStrategyFactory.create(load_type)
+    
+    def _execute_write_strategy(
+        self,
+        write_strategy: IWriteStrategy,
+        df,
+        path: str,
+        partition_cols: Optional[List[str]],
+        columns_metadata: List[ColumnMetadata],
+        table_config: TableConfig
+    ) -> None:
+        """
+        Ejecuta la estrategia de escritura con los parámetros apropiados (SRP, OCP)
+        Incluye validación de requisitos antes de ejecutar
+        
+        Args:
+            write_strategy: Estrategia de escritura a ejecutar
+            df: DataFrame con los datos procesados
+            path: Ruta de destino
+            partition_cols: Columnas de partición
+            columns_metadata: Metadatos de columnas
+            table_config: Configuración de la tabla
+        """
+        # Verificar si la tabla existe (para estrategias que lo requieren)
+        table_exists = TableExistenceChecker.table_exists(
+            spark=self.spark,
+            path=path,
+            table_format=self.table_format
+        )
+        
+        # ✅ Validar requisitos de la estrategia antes de ejecutar
+        validation_result = self.strategy_validator.validate_strategy_requirements(
+            write_strategy=write_strategy,
+            columns_metadata=columns_metadata,
+            table_exists=table_exists,
+            df=df
+        )
+        
+        # Mostrar advertencias si las hay
+        for warning in validation_result.get('warnings', []):
+            self.logger.warning(f"⚠️ {warning}")
+        
+        # Si hay errores críticos, lanzar excepción o usar fallback
+        if validation_result.get('errors'):
+            strategy_name = write_strategy.get_strategy_name()
+            error_msg = f"Errores de validación para estrategia '{strategy_name}': {validation_result['errors']}"
+            
+            # Para time_range, si no hay period_column, usar APPEND como fallback
+            if strategy_name == 'time_range' and 'columna de período' in str(validation_result['errors']).lower():
+                self.logger.warning(f"⚠️ {error_msg}. Usando APPEND como fallback.")
+                self.data_writer.append(df=df, path=path, partition_cols=partition_cols)
+                return
+            else:
+                # Para otros casos, lanzar excepción
+                from ...shared.exceptions import ConfigurationException
+                raise ConfigurationException(error_msg)
+        
+        # Preparar parámetros según el tipo de estrategia
+        strategy_name = write_strategy.get_strategy_name()
+        kwargs = {}
+        
+        if strategy_name == 'incremental':
+            # Estrategia incremental: usar metadatos de validación
+            id_columns = validation_result['metadata'].get('id_columns', [])
+            can_use_merge = validation_result['metadata'].get('can_use_merge', False)
+            
+            kwargs['id_columns'] = id_columns
+            kwargs['table_exists'] = table_exists
+            
+            if can_use_merge:
+                self.logger.info(f"🔄 Incremental MERGE usando columnas ID: {id_columns}")
+            else:
+                reason = "sin columnas ID" if not id_columns else "tabla no existe (primera carga)"
+                self.logger.info(f"📝 Incremental APPEND ({reason})")
+        
+        elif strategy_name == 'time_range':
+            # Estrategia time_range: usar metadatos de validación
+            period_column = validation_result['metadata'].get('period_column')
+            if period_column:
+                try:
+                    periods = [row[period_column] for row in df.select(period_column).distinct().collect()]
+                    kwargs['period_column'] = period_column
+                    kwargs['period_values'] = periods
+                    self.logger.info(f"⏰ TIME_RANGE: DELETE + INSERT - columna: {period_column}, períodos: {periods}")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Error extrayendo períodos: {e}. Usando APPEND como fallback.")
+                    self.data_writer.append(df=df, path=path, partition_cols=partition_cols)
+                    return
+            else:
+                # Fallback si no hay period_column
+                self.logger.warning("⚠️ TIME_RANGE sin columna de período - usando APPEND como fallback")
+                self.data_writer.append(df=df, path=path, partition_cols=partition_cols)
+                return
+        
+        elif strategy_name == 'full_load':
+            record_count = validation_result['metadata'].get('record_count', df.count() if df else 0)
+            self.logger.info(f"📦 Full load OVERWRITE: {record_count} registros")
+        
+        # Ejecutar la estrategia
+        write_strategy.execute(
+            data_writer=self.data_writer,
+            df=df,
+            path=path,
+            partition_cols=partition_cols,
+            **kwargs
+        )
 
 
 __all__ = ["DataProcessor"]
