@@ -109,7 +109,7 @@ class StrategyFactory:
         partition_mode = getattr(table_config, 'partition_mode', 'AUTO').upper()
         
         # Validar que PARTITION_MODE solo se use con FULL o TIME_RANGE
-        if partition_mode != 'AUTO' and table_config.load_type not in ['full', 'time_range']:
+        if partition_mode not in ['AUTO', 'NONE'] and table_config.load_type not in ['full', 'time_range']:
             logger.warning(f"PARTITION_MODE={partition_mode} ignored for load_type={table_config.load_type}")
         
         # Validar que MIN_MAX tenga PARTITION_COLUMN

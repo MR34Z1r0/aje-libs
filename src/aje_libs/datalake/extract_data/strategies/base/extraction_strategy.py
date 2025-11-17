@@ -140,6 +140,28 @@ class ExtractionStrategy(ABC):
             return source_table.split()[0]
         return source_table
     
+    def _build_table_name_with_joins(self) -> str:
+        """Construye el nombre de tabla con schema, preservando alias si existe, y agregando JOINs"""
+        source_table = self.table_config.source_table or ""
+        source_schema = self.table_config.source_schema or ""
+        
+        # Construir table name preservando alias si existe
+        if '.' in source_table and not source_schema:
+            # Ya tiene schema, usar tal cual
+            table_name_with_joins = source_table.strip()
+        elif source_schema:
+            # Construir con schema
+            table_name_with_joins = f"{source_schema}.{source_table}".strip()
+        else:
+            # Sin schema, usar solo la tabla
+            table_name_with_joins = source_table.strip()
+        
+        # Agregar JOINs si existen
+        if hasattr(self.table_config, 'join_expr') and self.table_config.join_expr and self.table_config.join_expr.strip():
+            table_name_with_joins += f" {self.table_config.join_expr.strip()}"
+        
+        return table_name_with_joins
+    
     def _build_basic_metadata(self) -> Dict[str, Any]:
         """Construye metadatos básicos para la extracción"""
         return {

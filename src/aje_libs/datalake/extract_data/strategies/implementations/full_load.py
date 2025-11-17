@@ -195,11 +195,9 @@ class FullLoadStrategy(ExtractionStrategy):
         logger.info("🔧 Building partitioned params for full load")
         
         # Construir table_name con JOIN para particionado
-        table_name_with_joins = f"{self.table_config.source_schema}.{self.table_config.source_table}"
-        
-        if hasattr(self.table_config, 'join_expr') and self.table_config.join_expr and self.table_config.join_expr.strip():
-            table_name_with_joins += f" {self.table_config.join_expr.strip()}"
-            logger.info(f"📎 Table with JOIN: {table_name_with_joins}")
+        # Construir table_name con JOIN (preservando alias si existe)
+        table_name_with_joins = self._build_table_name_with_joins()
+        logger.info(f"📎 Table with JOIN: {table_name_with_joins}")
         
         # Construir metadata completo
         metadata = {

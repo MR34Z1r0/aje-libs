@@ -50,6 +50,21 @@ class CsvExtractionConfigurationProvider(IConfigurationProvider):
             clean_row = {k.strip(): (v.strip() if isinstance(v, str) else v) for k, v in row.items() if k}
             rows.append(clean_row)
 
+        # Filtrar por STATUS='a' o 'A' para tables_* y columns_*
+        # Solo considerar registros con STATUS='a' o 'A', ignorar los demás
+        path_lower = path.lower()
+        if 'tables' in path_lower or 'columns' in path_lower:
+            filtered_rows = []
+            for row in rows:
+                status = str(row.get('STATUS', '')).strip().upper()
+                if status == 'A':
+                    filtered_rows.append(row)
+                elif self.logger:
+                    self.logger.debug(f"Registro ignorado por STATUS='{row.get('STATUS', '')}' en {path}")
+            rows = filtered_rows
+            if self.logger:
+                self.logger.debug(f"Después de filtrar por STATUS='a': {len(rows)} filas desde {path}")
+
         # Solo loguear en DEBUG - la información de carga de CSV no es crítica
         if self.logger:
             self.logger.debug(f"Cargadas {len(rows)} filas desde {path}")

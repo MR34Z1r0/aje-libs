@@ -278,7 +278,7 @@ class ComponentInitializer:
             load_type=load_type,
             source_table_type=table_row.get('SOURCE_TABLE_TYPE', ''),
             partition_mode=table_row.get('PARTITION_MODE', 'AUTO'),
-            partition_format=table_row.get('PARTITION_FORMAT'),
+            partition_format=table_row.get('PARTITION_FORMAT') or 'year={YYYY}/month={MM}/day={DD}/hour={HH}',
             id_column=table_row.get('ID_COLUMN'),
             partition_column=table_row.get('PARTITION_COLUMN'),
             filter_exp=table_row.get('FILTER_EXP'),
@@ -286,9 +286,9 @@ class ComponentInitializer:
             filter_data_type=table_row.get('FILTER_DATA_TYPE'),
             join_expr=table_row.get('JOIN_EXPR'),
             delay_incremental_ini=table_row.get('DELAY_INCREMENTAL_INI'),
-            delay_incremental_end=table_row.get('DELAY_INCREMENTAL_END'),
-            start_value=table_row.get('START_VALUE'),
-            end_value=table_row.get('END_VALUE')
+            delay_incremental_end=table_row.get('DELAY_INCREMENTAL_END') or '0',
+            start_value=table_row.get('START_VALUE') or None,
+            end_value=table_row.get('END_VALUE') or None
         )
     
     def _process_columns_field(self, columns_str: str) -> list:

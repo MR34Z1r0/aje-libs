@@ -322,7 +322,7 @@ class DataExtractionOrchestrator:
             load_type=load_type,
             source_table_type=table_row.get('SOURCE_TABLE_TYPE', ''),
             partition_mode=table_row.get('PARTITION_MODE', 'AUTO'),
-            partition_format=table_row.get('PARTITION_FORMAT'),
+            partition_format=table_row.get('PARTITION_FORMAT') or 'year={YYYY}/month={MM}/day={DD}/hour={HH}',
             id_column=table_row.get('ID_COLUMN'),
             partition_column=table_row.get('PARTITION_COLUMN'),
             filter_exp=table_row.get('FILTER_EXP'),
@@ -330,9 +330,9 @@ class DataExtractionOrchestrator:
             filter_data_type=table_row.get('FILTER_DATA_TYPE'),
             join_expr=table_row.get('JOIN_EXPR'),
             delay_incremental_ini=table_row.get('DELAY_INCREMENTAL_INI'),
-            delay_incremental_end=table_row.get('DELAY_INCREMENTAL_END'),
-            start_value=table_row.get('START_VALUE'),
-            end_value=table_row.get('END_VALUE')
+            delay_incremental_end=table_row.get('DELAY_INCREMENTAL_END') or '0',
+            start_value=table_row.get('START_VALUE') or None,
+            end_value=table_row.get('END_VALUE') or None
         )
     
     def _build_database_config(self, db_row: Dict[str, Any]) -> DatabaseConfig:
@@ -832,15 +832,35 @@ class DataExtractionOrchestrator:
         
         return chunking_params
 
+    def _build_from_clause_with_joins(self) -> str:
+        """Construye la cláusula FROM preservando alias si existe en source_table y agregando JOINs"""
+        source_table = self.table_config.source_table or ""
+        source_schema = self.table_config.source_schema or ""
+        
+        # Construir FROM clause preservando alias si existe
+        if '.' in source_table and not source_schema:
+            # Ya tiene schema, usar tal cual
+            from_clause = source_table.strip()
+        elif source_schema:
+            # Construir con schema
+            from_clause = f"{source_schema}.{source_table}".strip()
+        else:
+            # Sin schema, usar solo la tabla
+            from_clause = source_table.strip()
+        
+        # Agregar JOINs si existen
+        if hasattr(self.table_config, 'join_expr') and self.table_config.join_expr and self.table_config.join_expr.strip():
+            from_clause += f" {self.table_config.join_expr.strip()}"
+        
+        return from_clause
+    
     def _build_partitioned_query(self, partition_column: str, start_value: int, end_value: int) -> str:
         """Construye una query particionada individual"""
         # Construir columnas con ID_COLUMN si existe
         columns = self._parse_columns_for_partition()
         
-        # Construir FROM con JOINs
-        from_clause = f"{self.table_config.source_schema}.{self.table_config.source_table}"
-        if hasattr(self.table_config, 'join_expr') and self.table_config.join_expr:
-            from_clause += f" {self.table_config.join_expr}"
+        # Construir FROM con JOINs (preservando alias si existe en source_table)
+        from_clause = self._build_from_clause_with_joins()
         
         # Construir WHERE con partición y filtros
         where_conditions = [f"{partition_column} >= {start_value} AND {partition_column} < {end_value}"]

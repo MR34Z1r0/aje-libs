@@ -14,10 +14,13 @@ class QueryBuilder:
         """Build standard SELECT query"""
         columns = self._process_columns()
         
-        query = f"SELECT {columns} FROM {self.table_config.source_schema}.{self.table_config.source_table}"
+        # Construir FROM clause con schema y tabla (preservando alias si existe)
+        from_clause = self._build_from_clause()
         
-        if self.table_config.join_expr:
-            query += f" {self.table_config.join_expr}"
+        query = f"SELECT {columns} FROM {from_clause}"
+        
+        if self.table_config.join_expr and self.table_config.join_expr.strip():
+            query += f" {self.table_config.join_expr.strip()}"
         
         where_conditions = []
         
@@ -40,10 +43,13 @@ class QueryBuilder:
         """Build partitioned query with range"""
         columns = self._process_columns()
         
-        query = f"SELECT {columns} FROM {self.table_config.source_schema}.{self.table_config.source_table}"
+        # Construir FROM clause con schema y tabla (preservando alias si existe)
+        from_clause = self._build_from_clause()
         
-        if self.table_config.join_expr:
-            query += f" {self.table_config.join_expr}"
+        query = f"SELECT {columns} FROM {from_clause}"
+        
+        if self.table_config.join_expr and self.table_config.join_expr.strip():
+            query += f" {self.table_config.join_expr.strip()}"
         
         where_conditions = []
         
@@ -71,10 +77,13 @@ class QueryBuilder:
         
         columns = self._process_columns()
         
-        query = f"SELECT {columns} FROM {self.table_config.source_schema}.{self.table_config.source_table}"
+        # Construir FROM clause con schema y tabla (preservando alias si existe)
+        from_clause = self._build_from_clause()
         
-        if self.table_config.join_expr:
-            query += f" {self.table_config.join_expr}"
+        query = f"SELECT {columns} FROM {from_clause}"
+        
+        if self.table_config.join_expr and self.table_config.join_expr.strip():
+            query += f" {self.table_config.join_expr.strip()}"
         
         where_conditions = []
         
@@ -108,10 +117,13 @@ class QueryBuilder:
     
     def build_min_max_query(self, column: str, additional_where: Optional[str] = None) -> str:
         """Build query to get min and max values"""
-        query = f"SELECT MIN({column}) as min_val, MAX({column}) as max_val FROM {self.table_config.source_schema}.{self.table_config.source_table}"
+        # Construir FROM clause con schema y tabla (preservando alias si existe)
+        from_clause = self._build_from_clause()
         
-        if self.table_config.join_expr:
-            query += f" {self.table_config.join_expr}"
+        query = f"SELECT MIN({column}) as min_val, MAX({column}) as max_val FROM {from_clause}"
+        
+        if self.table_config.join_expr and self.table_config.join_expr.strip():
+            query += f" {self.table_config.join_expr.strip()}"
         
         where_conditions = [f"{column} <> 0"]
         
@@ -128,6 +140,22 @@ class QueryBuilder:
             query += f" WHERE {' AND '.join(where_conditions)}"
         
         return query
+    
+    def _build_from_clause(self) -> str:
+        """Build FROM clause preserving table alias if present in source_table"""
+        source_table = self.table_config.source_table or ""
+        source_schema = self.table_config.source_schema or ""
+        
+        # Si source_table ya incluye el schema (ej: dbo.mcompa1f m), usarlo directamente
+        if '.' in source_table and not source_schema:
+            # Ya tiene schema, usar tal cual
+            return source_table.strip()
+        elif source_schema:
+            # Construir con schema
+            return f"{source_schema}.{source_table}".strip()
+        else:
+            # Sin schema, usar solo la tabla
+            return source_table.strip()
     
     def _process_columns(self) -> str:
         """Process and clean column definitions"""

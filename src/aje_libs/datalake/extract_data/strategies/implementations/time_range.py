@@ -110,12 +110,9 @@ class TimeRangeStrategy(ExtractionStrategy):
         """
         logger.info("🔧 Building PARTITIONED INITIAL load params")
         
-        # Construir table_name con JOIN
-        table_name_with_joins = f"{self.table_config.source_schema}.{self.table_config.source_table}"
-        
-        if hasattr(self.table_config, 'join_expr') and self.table_config.join_expr and self.table_config.join_expr.strip():
-            table_name_with_joins += f" {self.table_config.join_expr.strip()}"
-            logger.info(f"📎 Table with JOIN: {table_name_with_joins}")
+        # Construir table_name con JOIN (preservando alias si existe)
+        table_name_with_joins = self._build_table_name_with_joins()
+        logger.info(f"📎 Table with JOIN: {table_name_with_joins}")
         
         # Construir metadata para particionado
         metadata = {
@@ -156,11 +153,8 @@ class TimeRangeStrategy(ExtractionStrategy):
         """
         logger.info("📋 Building NON-PARTITIONED INITIAL load params")
         
-        # Construir table_name con JOIN
-        table_name_with_joins = f"{self.table_config.source_schema}.{self.table_config.source_table}"
-        
-        if hasattr(self.table_config, 'join_expr') and self.table_config.join_expr and self.table_config.join_expr.strip():
-            table_name_with_joins += f" {self.table_config.join_expr.strip()}"
+        # Construir table_name con JOIN (preservando alias si existe)
+        table_name_with_joins = self._build_table_name_with_joins()
         
         # Crear parámetros básicos
         params = ExtractionParams(
@@ -187,10 +181,8 @@ class TimeRangeStrategy(ExtractionStrategy):
         """
         logger.info("🔧 Building PARTITIONED params for time range load")
         
-        table_name_with_joins = f"{self.table_config.source_schema}.{self.table_config.source_table}"
-        
-        if hasattr(self.table_config, 'join_expr') and self.table_config.join_expr and self.table_config.join_expr.strip():
-            table_name_with_joins += f" {self.table_config.join_expr.strip()}"
+        # Construir table_name con JOIN (preservando alias si existe)
+        table_name_with_joins = self._build_table_name_with_joins()
         
         metadata = {
             **self._build_basic_metadata(),
@@ -224,10 +216,8 @@ class TimeRangeStrategy(ExtractionStrategy):
     def _build_non_partitioned_params(self) -> ExtractionParams:
         """Construye parámetros para carga time range NO particionada"""
         
-        table_name_with_joins = f"{self.table_config.source_schema}.{self.table_config.source_table}"
-        
-        if hasattr(self.table_config, 'join_expr') and self.table_config.join_expr and self.table_config.join_expr.strip():
-            table_name_with_joins += f" {self.table_config.join_expr.strip()}"
+        # Construir table_name con JOIN (preservando alias si existe)
+        table_name_with_joins = self._build_table_name_with_joins()
         
         params = ExtractionParams(
             table_name=table_name_with_joins,

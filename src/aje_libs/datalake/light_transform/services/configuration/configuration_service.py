@@ -48,6 +48,21 @@ class ConfigurationService(IConfigurationProvider):
                 sanitized_row = self._sanitize_csv_row(row)
                 csv_data.append(sanitized_row)
 
+            # Filtrar por STATUS='a' o 'A' para tables_* y columns_*
+            # Solo considerar registros con STATUS='a' o 'A', ignorar los demás
+            path_lower = path.lower()
+            if 'tables' in path_lower or 'columns' in path_lower:
+                filtered_data = []
+                for row in csv_data:
+                    status = str(row.get('STATUS', '')).strip().upper()
+                    if status == 'A':
+                        filtered_data.append(row)
+                    elif self.logger:
+                        self.logger.debug(f"Registro ignorado por STATUS='{row.get('STATUS', '')}' en {path}")
+                csv_data = filtered_data
+                if self.logger:
+                    self.logger.info(f"Después de filtrar por STATUS='a': {len(csv_data)} filas desde {path}")
+
             if self.logger:
                 self.logger.info(f"CSV cargado exitosamente: {len(csv_data)} filas")
 
@@ -85,9 +100,12 @@ class ConfigurationService(IConfigurationProvider):
                     source_table_type=row.get('SOURCE_TABLE_TYPE', 'm'),
                     load_type=row.get('LOAD_TYPE', ''),
                     delay_incremental_ini=row.get('DELAY_INCREMENTAL_INI', '-2'),
-                    delay_incremental_end=row.get('DELAY_INCREMENTAL_END', '0'),
-                    partition_format=row.get('PARTITION_FORMAT'),
-                    partition_column=row.get('PARTITION_COLUMN')
+                    delay_incremental_end=row.get('DELAY_INCREMENTAL_END') or '0',
+                    partition_format=row.get('PARTITION_FORMAT') or 'year={YYYY}/month={MM}/day={DD}/hour={HH}',
+                    partition_column=row.get('PARTITION_COLUMN'),
+                    partition_mode=row.get('PARTITION_MODE', 'AUTO'),
+                    start_value=row.get('START_VALUE') or None,
+                    end_value=row.get('END_VALUE') or None
                 )
 
         raise ConfigurationError(f"Configuración de tabla no encontrada: {table_name}")
