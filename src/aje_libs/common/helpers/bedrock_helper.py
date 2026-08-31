@@ -67,35 +67,119 @@ class BedrockHelper:
         except ClientError as error:
             logger.error(f"Error invocando modelo: {error}")
             raise error
+
+    
+    # def converse(
+    #     self,
+    #     model: Union[str, BedrockModel],
+    #     messages: List[Dict[str, str]],
+    #     system_prompt: Optional[str] = None,
+    #     parameters: Optional[Dict[str, Any]] = None,
+    #     tool_config: Optional[Dict[str, Any]] = None
+    # ) -> Dict[str, Any]:
+    #     """
+    #     Usa la API de Converse para modelos que la soportan.
+        
+    #     :param model: ID del modelo (string o enum)
+    #     :param messages: Lista de mensajes
+    #     :param system_prompt: Prompt del sistema
+    #     :param parameters: Parámetros de inferencia
+    #     :return: Respuesta del modelo
+    #     """
+    #     model_id = self._get_model_id(model)
+        
+    #     try:
+    #         # CORREGIDO: Usa la instancia del modelo directamente
+    #         model_instance = ModelFactory.get_model(model_id)
+            
+    #         if "conversation" not in model_instance.supported_features:
+    #             raise ValueError(f"El modelo {model_id} no soporta la API de conversación")
+            
+    #         parameters = parameters or {}
+            
+    #         request_body = {
+    #             "modelId": model_id,
+    #             "messages": messages,
+    #             "inferenceConfig": {
+    #                 "maxTokens": parameters.get("max_tokens", 1024),
+    #                 "temperature": parameters.get("temperature", 0.3),
+    #                 "topP": parameters.get("top_p", 0.2)
+    #             },
+    #             "additionalModelRequestFields": {
+    #                 "inferenceConfig": {
+    #                     "topK": 1  # Este es requerido para tool calling en Nova
+    #                 }
+    #             }
+    #         }
+            
+    #         if system_prompt:
+    #             request_body["system"] = [{"text": system_prompt}]
+
+    #         if tool_config:
+    #             request_body["toolConfig"] = tool_config
+            
+    #         response = self.bedrock_client.converse(**request_body)
+
+    #         '''
+    #         content = response['output']['message']['content'][0]['text']
+    #         usage = response['usage']
+            
+    #         return {
+    #             "text": content,
+    #             "input_tokens": usage['inputTokens'],
+    #             "output_tokens": usage['outputTokens'],
+    #             "total_tokens": usage['inputTokens'] + usage['outputTokens'],
+    #             "stop_reason": response.get('stopReason', '')
+    #         }
+    #         '''
+    #         return response
+            
+    #     except ClientError as error:
+    #         logger.error(f"Error en converse: {error}")
+    #         raise error
     
     def converse(
         self,
         model: Union[str, BedrockModel],
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         system_prompt: Optional[str] = None,
         parameters: Optional[Dict[str, Any]] = None,
-        tool_config: Optional[Dict[str, Any]] = None
+        additional_model_request_fields: Optional[Dict[str, Any]] = None,
+        output_config: Optional[Dict[str, Any]] = None,
+        tool_config: Optional[Dict[str, Any]] = None,
+        guardrail_config: Optional[Dict[str, Any]] = None,
+        request_metadata: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
-        Usa la API de Converse para modelos que la soportan.
-        
-        :param model: ID del modelo (string o enum)
-        :param messages: Lista de mensajes
-        :param system_prompt: Prompt del sistema
-        :param parameters: Parámetros de inferencia
-        :return: Respuesta del modelo
+        Usa la API Converse de Amazon Bedrock.
+
+        :param model: ID del modelo o enum BedrockModel.
+        :param messages: Mensajes de la conversación.
+        :param system_prompt: Instrucciones del sistema.
+        :param parameters: Parámetros base de inferencia:
+            max_tokens, temperature, top_p, stop_sequences.
+        :param additional_model_request_fields:
+            Parámetros específicos del modelo, por ejemplo topK para Nova.
+        :param output_config:
+            Configuración de structured output.
+        :param tool_config: Configuración de tools/function calling.
+        :param guardrail_config: Configuración de guardrails.
+        :param request_metadata: Metadata de la solicitud.
+        :return: Respuesta de Converse.
         """
+
         model_id = self._get_model_id(model)
-        
+
         try:
-            # CORREGIDO: Usa la instancia del modelo directamente
             model_instance = ModelFactory.get_model(model_id)
-            
+
             if "conversation" not in model_instance.supported_features:
-                raise ValueError(f"El modelo {model_id} no soporta la API de conversación")
-            
+                raise ValueError(
+                    f"El modelo {model_id} no soporta la API de conversación"
+                )
+
             parameters = parameters or {}
-            
+
             request_body = {
                 "modelId": model_id,
                 "messages": messages,
@@ -103,40 +187,50 @@ class BedrockHelper:
                     "maxTokens": parameters.get("max_tokens", 1024),
                     "temperature": parameters.get("temperature", 0.3),
                     "topP": parameters.get("top_p", 0.2)
-                },
-                "additionalModelRequestFields": {
-                    "inferenceConfig": {
-                        "topK": 1  # Este es requerido para tool calling en Nova
-                    }
                 }
             }
-            
+
+            stop_sequences = parameters.get("stop_sequences")
+
+            if stop_sequences:
+                request_body["inferenceConfig"]["stopSequences"] = stop_sequences
+
             if system_prompt:
-                request_body["system"] = [{"text": system_prompt}]
+                request_body["system"] = [
+                    {
+                        "text": system_prompt
+                    }
+                ]
+
+            if additional_model_request_fields:
+                request_body["additionalModelRequestFields"] = additional_model_request_fields
+
+            if output_config:
+                request_body["outputConfig"] = output_config
 
             if tool_config:
                 request_body["toolConfig"] = tool_config
-            
+
+            if guardrail_config:
+                request_body["guardrailConfig"] = guardrail_config
+
+            if request_metadata:
+                request_body["requestMetadata"] = request_metadata
+
+            # logger.info(
+            #     f"Invocando modelo {model_id} mediante Converse"
+            # )
+
             response = self.bedrock_client.converse(**request_body)
 
-            '''
-            content = response['output']['message']['content'][0]['text']
-            usage = response['usage']
-            
-            return {
-                "text": content,
-                "input_tokens": usage['inputTokens'],
-                "output_tokens": usage['outputTokens'],
-                "total_tokens": usage['inputTokens'] + usage['outputTokens'],
-                "stop_reason": response.get('stopReason', '')
-            }
-            '''
             return response
-            
+
         except ClientError as error:
-            logger.error(f"Error en converse: {error}")
+            logger.error(
+                f"Error en converse con modelo {model_id}: {error}"
+            )
             raise error
-    
+
     def get_embedding(
         self,
         model: Union[str, BedrockModel],

@@ -164,6 +164,7 @@ class PineconeHelper:
         
         # Get embeddings for the query
         embeddings = self.get_embeddings(query_text)
+        logger.info(f"Embeddings length: {len(embeddings)}")
         
         # Query Pinecone
         results = self.query(
@@ -306,9 +307,15 @@ class PineconeHelper:
                 kwargs["namespace"] = namespace
                 
             response = self.index.fetch(**kwargs)
-            fetched_vectors = response.get("vectors", {})
+            logger.info(f"Fetch response: {response}")
+
+            fetched_vectors = response.vectors
             logger.info(f"Successfully fetched {len(fetched_vectors)} vectors")
-            return response
+
+            return fetched_vectors
+            #fetched_vectors = response.get("vectors", {})
+            #logger.info(f"Successfully fetched {len(fetched_vectors)} vectors")
+            #return response
         except Exception as error:
             logger.error(f"Failed to fetch vectors - Index: {self.index_name} | Error: {str(error)}")
             raise error
